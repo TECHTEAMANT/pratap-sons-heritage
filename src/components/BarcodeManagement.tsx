@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Barcode, Edit2, Save, X, Printer, Upload, Search, Download } from 'lucide-react';
+import { Barcode, Edit2, Save, X, Printer, Upload, Search } from 'lucide-react';
+
+const ENABLE_BARCODE_PRINT_AUDIT_LOGS = true;
 
 interface BarcodeBatch {
   id: string;
@@ -155,53 +157,60 @@ export default function BarcodeManagement() {
       return;
     }
 
-    // Open the print window immediately to avoid popup blockers and ensure UX responsiveness
-    window.open(`#barcode-print?batch_id=${printBarcode?.id}&quantity=${printQuantity}`, '_blank');
+    try {
+      sessionStorage.setItem('returnTo', '#barcode-management');
+    } catch {}
+
+    // Navigate in the same tab and auto-trigger print
+    const printUrl = `${window.location.origin}${window.location.pathname}#barcode-print?batch_id=${printBarcode?.id}&quantity=${printQuantity}&alias=${printBarcode?.barcode_alias_8digit}&design=${printBarcode?.design_no}&mrp=${printBarcode?.mrp}&product=${encodeURIComponent(printBarcode?.product_group?.name || '')}&color=${encodeURIComponent(printBarcode?.color?.name || '')}&size=${encodeURIComponent(printBarcode?.size?.name || '')}&vendor_code=${encodeURIComponent(printBarcode?.vendor?.vendor_code || '')}&auto=1`;
+    window.location.assign(printUrl);
     setShowPrintDialog(false);
     setPrintBarcode(null);
     setSuccess('Print job started');
     setTimeout(() => setSuccess(''), 3000);
 
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      const { data: userRecord } = await supabase
-        .from('users')
-        .select('id')
-        .eq('auth_user_id', userData?.user?.id)
-        .maybeSingle();
+    // Perform logging in the background without awaiting it to avoid blocking the UI
+    if (ENABLE_BARCODE_PRINT_AUDIT_LOGS) {
+      setTimeout(async () => {
+        try {
+          const { data: userData } = await supabase.auth.getUser();
+          if (!userData?.user) return;
 
-      // Try logging with the new schema structure first
-      const { error: logError } = await supabase
-        .from('barcode_print_logs')
-        .insert([{
-          barcode_alias: printBarcode?.barcode_alias_8digit,
-          barcode_batch_id: printBarcode?.id,
-          quantity_printed: printQuantity,
-          reason: printReason,
-          printed_by: userRecord?.id,
-        }]);
+          const { data: userRecord } = await supabase
+            .from('users')
+            .select('id')
+            .eq('auth_user_id', userData.user.id)
+            .maybeSingle();
 
-      if (logError) {
-        // If new schema columns are missing (PGRST204), fallback to the old schema (JSONB)
-        if (logError.code === 'PGRST204') {
-          console.warn('New schema columns missing, falling back to old schema');
-          await supabase.from('barcode_print_logs').insert([{
-            items_printed: [{
+          const { error: logError } = await supabase
+            .from('barcode_print_logs')
+            .insert([{
               barcode_alias: printBarcode?.barcode_alias_8digit,
               barcode_batch_id: printBarcode?.id,
               quantity_printed: printQuantity,
-              reason: printReason
-            }],
-            printed_by: userRecord?.id,
-          }]);
-        } else {
-          // Log other errors but don't disturb the user since printing already started
-          console.error('Failed to log print action:', logError);
+              reason: printReason,
+              printed_by: userRecord?.id,
+            }]);
+
+          if (logError) {
+            if (logError.code === 'PGRST204') {
+              await supabase.from('barcode_print_logs').insert([{
+                items_printed: [{
+                  barcode_alias: printBarcode?.barcode_alias_8digit,
+                  barcode_batch_id: printBarcode?.id,
+                  quantity_printed: printQuantity,
+                  reason: printReason
+                }],
+                printed_by: userRecord?.id,
+              }]);
+            } else {
+              console.error('Failed to log print action:', logError);
+            }
+          }
+        } catch (err) {
+          console.error('Error in print logging background task:', err);
         }
-      }
-    } catch (err) {
-      console.error('Error in print logging background task:', err);
-      // Do not set global error state here to avoid confusing the user after successful print launch
+      }, 0);
     }
   };
 

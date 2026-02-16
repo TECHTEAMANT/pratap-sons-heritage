@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Barcode as BarcodeIcon, Search, Printer, RefreshCw, Download } from 'lucide-react';
 import { generateBarcodeDataURL } from '../utils/barcodeGenerator';
+import { encodeCostForVendor } from '../utils/costEncoding';
+
+const ENABLE_BARCODE_PRINT_AUDIT_LOGS = true;
 
 export default function BarcodePrint() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -12,6 +15,8 @@ export default function BarcodePrint() {
   const [poData, setPOData] = useState<any>(null);
   const [selectedSizeFilter, setSelectedSizeFilter] = useState<string>('all');
   const [availableSizes, setAvailableSizes] = useState<any[]>([]);
+  const [autoPrint, setAutoPrint] = useState(false);
+  const [autoPrintTriggered, setAutoPrintTriggered] = useState(false);
 
   useEffect(() => {
     const hash = window.location.hash;
@@ -22,11 +27,20 @@ export default function BarcodePrint() {
     const barcodeId = params.get('barcode_id');
     const batchId = params.get('batch_id');
     const quantity = params.get('quantity');
+    const alias = params.get('alias') || '';
+    const design = params.get('design') || '';
+    const mrp = params.get('mrp') || '0';
+    const product = params.get('product') || '';
+    const color = params.get('color') || '';
+    const size = params.get('size') || '';
+    const vendorCode = params.get('vendor_code') || '';
+    const auto = params.get('auto') || '';
+    setAutoPrint(auto === '1' || auto.toLowerCase() === 'true');
 
     if (poId) {
       loadPOItems(poId, invoice || '', order || '');
     } else if (batchId) {
-      loadBatchItems(batchId, parseInt(quantity || '1', 10));
+      loadBatchItems(batchId, parseInt(quantity || '1', 10), alias, design, mrp, product, color, size, vendorCode);
     } else if (barcodeId) {
       loadSingleItem(barcodeId, parseInt(quantity || '1', 10));
     } else {
@@ -36,16 +50,24 @@ export default function BarcodePrint() {
 
   useEffect(() => {
     const uniqueSizes = Array.from(
-      new Set(items.map(item => item.sizes?.name).filter(Boolean))
+      new Set(items.map(item => item.size?.name).filter(Boolean))
     ).map(name => {
-      const item = items.find(i => i.sizes?.name === name);
+      const item = items.find(i => i.size?.name === name);
       return {
         name,
-        id: item?.sizes?.id || item?.size,
+        id: item?.size?.id || item?.size_id,
       };
     });
     setAvailableSizes(uniqueSizes);
   }, [items]);
+
+  useEffect(() => {
+    if (autoPrint && !autoPrintTriggered && items.length > 0 && selectedItems.size > 0) {
+      setAutoPrintTriggered(true);
+      // Defer slightly to ensure DOM is ready
+      setTimeout(() => handlePrint(), 0);
+    }
+  }, [autoPrint, autoPrintTriggered, items, selectedItems]);
 
   const loadPOItems = async (poId: string, invoiceNumber: string, orderNumber: string) => {
     setLoading(true);
@@ -61,25 +83,30 @@ export default function BarcodePrint() {
 
       if (poError) throw poError;
 
-      const { data: purchaseItems, error: itemsError } = await supabase
-        .from('purchase_items')
+      const { data: batches, error: batchError } = await supabase
+        .from('barcode_batches')
         .select(`
           *,
-          product_groups:product_group(name, group_code),
-          colors:color(name, color_code),
-          sizes:size(name, size_code)
+          product_group:product_groups(name, group_code),
+          color:colors(name, color_code),
+          size:sizes(name, size_code)
         `)
         .eq('po_id', poId);
 
-      if (itemsError) throw itemsError;
+      if (batchError) throw batchError;
 
       const itemsWithQuantity: any[] = [];
-      purchaseItems?.forEach((item: any) => {
-        for (let i = 0; i < item.quantity; i++) {
+      batches?.forEach((batch: any) => {
+        const qty = batch.total_quantity || 0;
+        for (let i = 0; i < qty; i++) {
           itemsWithQuantity.push({
-            ...item,
-            barcode_id: `${item.design_no}-${po.vendors.vendor_code}-${item.product_groups.group_code}-${item.colors.color_code}-${item.sizes.size_code}-${i + 1}`,
-            mrp: item.mrp,
+            ...batch,
+            barcode_id: batch.barcode_alias_8digit,
+            product_group: batch.product_group,
+            color: batch.color,
+            size: batch.size,
+            mrp: batch.mrp,
+            vendor: po.vendors,
             po_id: poId,
             invoice_number: invoiceNumber,
             order_number: orderNumber,
@@ -104,17 +131,27 @@ export default function BarcodePrint() {
     }
   };
 
-  const loadBatchItems = async (batchId: string, quantity: number) => {
+  const loadBatchItems = async (
+    batchId: string, 
+    quantity: number, 
+    aliasFallback?: string, 
+    designFallback?: string,
+    mrpFallback?: string,
+    productFallback?: string,
+    colorFallback?: string,
+    sizeFallback?: string,
+    vendorFallback?: string,
+  ) => {
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from('barcode_batches')
         .select(`
           *,
-          product_groups:product_group(name, group_code),
-          colors:color(name, color_code),
-          sizes:size(name, size_code),
-          vendors:vendor(name, vendor_code),
+          product_group:product_groups(name, group_code),
+          color:colors(name, color_code),
+          size:sizes(name, size_code),
+          vendor:vendors(name, vendor_code),
           purchase_orders:po_id(id, po_number, invoice_number, order_number)
         `)
         .eq('id', batchId)
@@ -125,11 +162,14 @@ export default function BarcodePrint() {
       if (data) {
         const item = {
           barcode_id: data.barcode_alias_8digit,
-          product_groups: data.product_groups,
+          product_group: data.product_group,
           design_no: data.design_no,
-          colors: data.colors,
-          sizes: data.sizes,
+          color: data.color,
+          size: data.size,
           mrp: data.mrp,
+          cost_actual: data.cost_actual,
+          vendor: data.vendor,
+          vendor_code: data.vendor?.vendor_code || vendorFallback || '',
           status: data.status,
           purchase_orders: data.purchase_orders
         };
@@ -137,9 +177,40 @@ export default function BarcodePrint() {
         const itemsToPrint = Array(quantity).fill(item);
         setItems(itemsToPrint);
         setSelectedItems(new Set([item.barcode_id]));
+      } else if (aliasFallback) {
+        const item = {
+          barcode_id: aliasFallback,
+          product_group: { name: productFallback || '' },
+          design_no: designFallback || '',
+          color: { name: colorFallback || '' },
+          size: { name: sizeFallback || '' },
+          mrp: parseFloat(mrpFallback || '0'),
+          vendor_code: vendorFallback || '',
+          status: 'New',
+          purchase_orders: null
+        };
+        const itemsToPrint = Array(quantity).fill(item);
+        setItems(itemsToPrint);
+        setSelectedItems(new Set([item.barcode_id]));
       }
     } catch (err) {
       console.error('Error loading batch:', err);
+      if (aliasFallback) {
+        const item = {
+          barcode_id: aliasFallback,
+          product_group: { name: productFallback || '' },
+          design_no: designFallback || '',
+          color: { name: colorFallback || '' },
+          size: { name: sizeFallback || '' },
+          mrp: parseFloat(mrpFallback || '0'),
+          vendor_code: vendorFallback || '',
+          status: 'New',
+          purchase_orders: null
+        };
+        const itemsToPrint = Array(quantity).fill(item);
+        setItems(itemsToPrint);
+        setSelectedItems(new Set([aliasFallback]));
+      }
     } finally {
       setLoading(false);
     }
@@ -152,10 +223,10 @@ export default function BarcodePrint() {
         .from('product_items')
         .select(`
           *,
-          product_groups:product_group(name, group_code),
-          colors:color(name, color_code),
-          sizes:size(name, size_code),
-          vendors:vendor(name, vendor_code),
+          product_group:product_groups(name, group_code),
+          color:colors(name, color_code),
+          size:sizes(name, size_code),
+          vendor:vendors(name, vendor_code),
           purchase_orders:po_id(id, po_number, invoice_number, order_number)
         `)
         .eq('barcode_id', barcodeId)
@@ -182,10 +253,10 @@ export default function BarcodePrint() {
         .from('product_items')
         .select(`
           *,
-          product_groups:product_group(name, group_code),
-          colors:color(name, color_code),
-          sizes:size(name, size_code),
-          vendors:vendor(name, vendor_code),
+          product_group:product_groups(name, group_code),
+          color:colors(name, color_code),
+          size:sizes(name, size_code),
+          vendor:vendors(name, vendor_code),
           purchase_orders:po_id(id, po_number, invoice_number, order_number)
         `)
         .order('created_at', { ascending: false })
@@ -205,12 +276,12 @@ export default function BarcodePrint() {
     const matchesSearch = (
       item.barcode_id?.toLowerCase().includes(searchLower) ||
       item.design_no?.toLowerCase().includes(searchLower) ||
-      item.product_groups?.name?.toLowerCase().includes(searchLower)
+      item.product_group?.name?.toLowerCase().includes(searchLower)
     );
 
     const matchesSize = selectedSizeFilter === 'all' ||
-      item.sizes?.id === selectedSizeFilter ||
-      item.size === selectedSizeFilter;
+      item.size?.id === selectedSizeFilter ||
+      item.size_id === selectedSizeFilter;
 
     return matchesSearch && matchesSize;
   });
@@ -234,6 +305,9 @@ export default function BarcodePrint() {
   };
 
   const saveAuditLog = async (printedItems: any[]) => {
+    if (!ENABLE_BARCODE_PRINT_AUDIT_LOGS) {
+      return;
+    }
     try {
       const { data: userData } = await supabase.auth.getUser();
       const { data: userRecord } = await supabase
@@ -246,9 +320,9 @@ export default function BarcodePrint() {
         items_printed: printedItems.map(item => ({
           barcode_id: item.barcode_id,
           design_no: item.design_no,
-          product_group: item.product_groups?.name,
-          color: item.colors?.name,
-          size: item.sizes?.name,
+          product_group: item.product_group?.name,
+          color: item.color?.name,
+          size: item.size?.name,
           mrp: item.mrp,
         })),
         printed_by: userRecord?.id || null,
@@ -261,11 +335,29 @@ export default function BarcodePrint() {
         auditData.order_number = poData.order_number;
       }
 
+      // Try inserting into the old schema first (since this component seems to rely on items_printed)
+      // Or better, check for errors and handle them gracefully
       const { error } = await supabase
         .from('barcode_print_logs')
         .insert([auditData]);
 
-      if (error) throw error;
+      if (error) {
+         // If error is PGRST204 (column missing), it implies we might be trying to insert into a new schema structure
+         // We should attempt to insert using the old schema format as a fallback
+         if (error.code === 'PGRST204') {
+             console.warn('New schema columns missing in BarcodePrint, falling back to old schema');
+             await supabase.from('barcode_print_logs').insert([{
+                 items_printed: auditData.items_printed,
+                 printed_by: auditData.printed_by,
+                 invoice_number: auditData.invoice_number,
+                 order_number: auditData.order_number,
+                 po_id: auditData.po_id
+             }]);
+         } else {
+             // Log other errors but don't disturb the user since printing is more important
+             console.warn('Audit log failed (non-blocking):', error);
+         }
+      }
     } catch (err) {
       console.error('Error saving audit log:', err);
     }
@@ -277,20 +369,49 @@ export default function BarcodePrint() {
 
     const selectedItemsData = items.filter(item => selectedItems.has(item.barcode_id));
 
-    await saveAuditLog(selectedItemsData);
+    // Log in background, don't await
+    if (ENABLE_BARCODE_PRINT_AUDIT_LOGS) {
+      saveAuditLog(selectedItemsData).catch(err => console.error('Background log error:', err));
+    }
 
     const sizeStyles = {
-      small: { width: '50mm', height: '25mm', fontSize: '8px', padding: '2mm', barcodeWidth: 2, barcodeHeight: 40 },
-      medium: { width: '70mm', height: '35mm', fontSize: '10px', padding: '3mm', barcodeWidth: 3, barcodeHeight: 60 },
-      large: { width: '100mm', height: '50mm', fontSize: '12px', padding: '4mm', barcodeWidth: 3, barcodeHeight: 80 }
+      small: { width: '50mm', minHeight: '30mm', fontSize: '8px', padding: '1mm', barcodeWidth: 2, barcodeHeight: 35 },
+      medium: { width: '70mm', minHeight: '40mm', fontSize: '10px', padding: '1mm', barcodeWidth: 2, barcodeHeight: 50 },
+      large: { width: '100mm', minHeight: '60mm', fontSize: '12px', padding: '1mm', barcodeWidth: 3, barcodeHeight: 70 }
     };
 
     const size = sizeStyles[printSize];
 
     const barcodeHTML = selectedItemsData.map(item => {
-      const orderInfo = item.order_number || item.purchase_orders?.order_number || '';
-      const invoiceInfo = item.invoice_number || item.purchase_orders?.invoice_number || '';
-      const referenceInfo = orderInfo ? `Ord: ${orderInfo}` : (invoiceInfo ? `Inv: ${invoiceInfo}` : '');
+      const rawGroupCode = item.product_group?.group_code || item.group_code || '';
+      const rawVendorCode =
+        item.vendor?.vendor_code ||
+        item.vendor_code ||
+        poData?.vendor?.vendor_code ||
+        '';
+      const groupCode = rawGroupCode || (item.product_group?.name ? String(item.product_group.name).slice(0, 2).toUpperCase() : '');
+      const vendorCode = rawVendorCode || (item.vendor?.name || poData?.vendor?.name ? String(item.vendor?.name || poData?.vendor?.name).slice(0, 2).toUpperCase() : '');
+
+      const design = item.design_no || '';
+      const rawColorCode = item.color?.color_code || item.color_code || '';
+      const colorCode = rawColorCode || (item.color?.name ? String(item.color.name).slice(0, 2).toUpperCase() : '');
+
+      const priceValue = item.mrp ?? item.cost_actual ?? item.cost_per_item ?? 0;
+      const encodedCost = encodeCostForVendor(priceValue, 'CRAZY WOMEN');
+
+      const designPart = colorCode ? `${design}${colorCode}` : design;
+      const pricePart = encodedCost || (priceValue ? String(priceValue) : '');
+
+      const humanParts = [
+        groupCode,
+        designPart,
+        vendorCode,
+        pricePart
+      ].filter(Boolean);
+
+      const humanCode = (humanParts.length > 0
+        ? humanParts.join('-')
+        : (design || item.barcode_id || ''));
 
       const barcodeDataURL = generateBarcodeDataURL(item.barcode_id, {
         width: size.barcodeWidth,
@@ -301,33 +422,32 @@ export default function BarcodePrint() {
       return `
       <div style="
         width: ${size.width};
-        height: ${size.height};
-        border: 1px solid #000;
+        min-height: ${size.minHeight};
+        border: 2px solid #000;
         padding: ${size.padding};
         margin: 5mm;
         page-break-inside: avoid;
         display: inline-block;
         font-family: Arial, sans-serif;
+        box-sizing: border-box;
+        background: #fff;
       ">
-        <div style="text-align: center; margin-bottom: 1mm;">
-          <strong style="font-size: ${size.fontSize};">${item.product_groups?.name || ''}</strong>
+        <div style="text-align: center; margin-bottom: 0.5mm;">
+          <strong style="font-size: ${size.fontSize}; text-transform: uppercase;">${item.product_group?.name || ''}</strong>
         </div>
-        <div style="text-align: center; font-size: calc(${size.fontSize} - 1px); margin-bottom: 1mm;">
-          ${item.design_no} | ${item.colors?.name || ''} | ${item.sizes?.name || ''}
+        <div style="text-align: center; font-family: 'Courier New', monospace; font-size: calc(${size.fontSize} - 1px); margin-bottom: 0.3mm; font-weight: bold; letter-spacing: 1px;">
+          ${humanCode}
         </div>
-        ${referenceInfo ? `
-        <div style="text-align: center; font-size: calc(${size.fontSize} - 2px); color: #666; margin-bottom: 1mm;">
-          ${referenceInfo}
+        <div style="text-align: center; margin: 0.5mm 0;">
+          <img src="${barcodeDataURL}" style="max-width: 95%; height: auto; display: block; margin: 0 auto;" alt="Barcode" />
         </div>
-        ` : ''}
-        <div style="text-align: center; margin: 2mm 0;">
-          <img src="${barcodeDataURL}" style="max-width: 100%; height: auto;" alt="Barcode" />
+        <div style="text-align: center; font-family: 'Courier New', monospace; font-size: calc(${size.fontSize} + 1px); font-weight: 900; margin-top: 0.3mm;">
+          ${item.barcode_id || ''}
         </div>
-        <div style="text-align: center; font-family: 'Courier New', monospace; font-size: calc(${size.fontSize} - 1px); margin-bottom: 1mm;">
-          ${item.barcode_id}
-        </div>
-        <div style="text-align: center; font-size: calc(${size.fontSize} + 2px); font-weight: bold;">
-          MRP: ₹${parseFloat(item.mrp).toFixed(2)}
+        <div style="text-align: center; font-size: calc(${size.fontSize} + 1px); font-weight: 900; margin-top: 0.2mm;">
+          <span>Size: <span style="font-weight: 900;">${item.size?.name || ''}</span></span>
+          &nbsp;|&nbsp;
+          <span>MRP: <span style="font-weight: 900;">₹${parseFloat(item.mrp).toFixed(2)}</span></span>
         </div>
       </div>
     `}).join('');
@@ -370,10 +490,10 @@ export default function BarcodePrint() {
     const headers = ['Barcode ID', 'Product Group', 'Design No', 'Color', 'Size', 'MRP', 'Invoice No', 'Order No', 'Status'];
     const rows = selectedItemsData.map(item => [
       item.barcode_id,
-      item.product_groups?.name || '',
+      item.product_group?.name || '',
       item.design_no,
-      item.colors?.name || '',
-      item.sizes?.name || '',
+      item.color?.name || '',
+      item.size?.name || '',
       item.mrp,
       item.invoice_number || item.purchase_orders?.invoice_number || '',
       item.order_number || item.purchase_orders?.order_number || '',
@@ -397,6 +517,17 @@ export default function BarcodePrint() {
             <BarcodeIcon className="w-8 h-8 text-blue-600 mr-3" />
             <h2 className="text-3xl font-bold text-gray-800">Barcode Management</h2>
           </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const target = sessionStorage.getItem('returnTo') || '#dashboard';
+                window.location.hash = target;
+              }}
+              className="px-4 py-2 bg-gray-100 rounded-lg hover:bg-gray-200"
+              title="Back"
+            >
+              Back
+            </button>
           <button
             onClick={loadItems}
             className="p-3 bg-gray-100 rounded-lg hover:bg-gray-200"
@@ -404,6 +535,7 @@ export default function BarcodePrint() {
           >
             <RefreshCw className="w-5 h-5 text-gray-700" />
           </button>
+          </div>
         </div>
 
         {poData && (
@@ -514,6 +646,16 @@ export default function BarcodePrint() {
                 Print Labels
               </button>
               <button
+                onClick={() => {
+                  alert('To save as PDF:\n1. Click "Print Labels"\n2. In the print dialog, select "Save as PDF" as the destination.');
+                  handlePrint();
+                }}
+                className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center"
+              >
+                <Download className="w-5 h-5 mr-2" />
+                Save as PDF
+              </button>
+              <button
                 onClick={downloadCSV}
                 className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center"
               >
@@ -566,12 +708,42 @@ export default function BarcodePrint() {
                     </td>
                   </tr>
                 ) : (
-                  filteredItems.map((item, index) => {
+                filteredItems.map((item, index) => {
                     const barcodeImageURL = generateBarcodeDataURL(item.barcode_id, {
                       width: 2,
                       height: 40,
                       displayValue: false,
                     });
+
+                    const rawGroupCode = item.product_group?.group_code || item.group_code || '';
+                    const rawVendorCode =
+                      item.vendor?.vendor_code ||
+                      item.vendor_code ||
+                      poData?.vendor?.vendor_code ||
+                      '';
+                    const groupCode = rawGroupCode || (item.product_group?.name ? String(item.product_group.name).slice(0, 2).toUpperCase() : '');
+                    const vendorCode = rawVendorCode || (item.vendor?.name || poData?.vendor?.name ? String(item.vendor?.name || poData?.vendor?.name).slice(0, 2).toUpperCase() : '');
+
+                    const design = item.design_no || '';
+                    const rawColorCode = item.color?.color_code || item.color_code || '';
+                    const colorCode = rawColorCode || (item.color?.name ? String(item.color.name).slice(0, 2).toUpperCase() : '');
+
+                    const priceValue = item.mrp ?? item.cost_actual ?? item.cost_per_item ?? 0;
+                    const encodedCost = encodeCostForVendor(priceValue, 'CRAZY WOMEN');
+
+                    const designPart = colorCode ? `${design}${colorCode}` : design;
+                    const pricePart = encodedCost || (priceValue ? String(priceValue) : '');
+
+                    const humanParts = [
+                      groupCode,
+                      designPart,
+                      vendorCode,
+                      pricePart
+                    ].filter(Boolean);
+
+                    const humanCode = (humanParts.length > 0
+                      ? humanParts.join('-')
+                      : (design || item.barcode_id || ''));
 
                     return (
                       <tr key={`${item.barcode_id}-${index}`} className="border-b hover:bg-gray-50">
@@ -584,19 +756,31 @@ export default function BarcodePrint() {
                           />
                         </td>
                         <td className="p-4">
-                          <div className="bg-white p-2 rounded border border-gray-200 flex justify-center items-center" style={{ minHeight: '50px', maxWidth: '120px' }}>
+                          <div className="bg-white p-2 rounded border-2 border-gray-800 flex flex-col items-center gap-0.5" style={{ minWidth: '140px' }}>
+                            <div className="text-[8px] font-bold uppercase truncate w-full text-center">
+                              {item.product_group?.name}
+                            </div>
+                            <div className="text-[7px] font-mono font-bold truncate w-full text-center">
+                              {humanCode}
+                            </div>
                             {barcodeImageURL ? (
-                              <img src={barcodeImageURL} alt="Barcode" className="max-w-full h-auto" />
+                              <img src={barcodeImageURL} alt="Barcode" className="h-8 object-contain" />
                             ) : (
-                              <span className="text-xs text-red-500">Error</span>
+                              <span className="text-[8px] text-red-500">Error</span>
                             )}
+                            <div className="text-[8px] font-mono font-bold">
+                              {item.barcode_id}
+                            </div>
+                            <div className="text-[8px] font-black border-t border-gray-200 w-full text-center pt-0.5">
+                              Size: {item.size?.name || ''} | MRP: ₹{parseFloat(item.mrp).toFixed(2)}
+                            </div>
                           </div>
                         </td>
                         <td className="p-4 font-mono text-sm">{item.barcode_id}</td>
-                        <td className="p-4 text-sm">{item.product_groups?.name || 'N/A'}</td>
+                        <td className="p-4 text-sm">{item.product_group?.name || 'N/A'}</td>
                         <td className="p-4 text-sm">{item.design_no}</td>
-                        <td className="p-4 text-sm">{item.colors?.name || 'N/A'}</td>
-                        <td className="p-4 text-sm">{item.sizes?.name || 'N/A'}</td>
+                        <td className="p-4 text-sm">{item.color?.name || 'N/A'}</td>
+                        <td className="p-4 text-sm">{item.size?.name || 'N/A'}</td>
                         <td className="p-4 text-sm font-semibold">₹{parseFloat(item.mrp).toFixed(2)}</td>
                         <td className="p-4 text-xs text-gray-600">
                           {(() => {

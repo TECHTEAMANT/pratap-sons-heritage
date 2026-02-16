@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { usePermissions } from './hooks/usePermissions';
 import Login from './components/Login';
@@ -12,6 +12,8 @@ import DefectiveStock from './components/DefectiveStock';
 import MasterData from './components/MasterData';
 import BarcodePrint from './components/BarcodePrint';
 import BarcodeManagement from './components/BarcodeManagement';
+import PurchaseOrders from './components/PurchaseOrders.tsx';
+import SalesOrder from './components/SalesOrder.tsx';
 import PurchaseInvoice from './components/PurchaseInvoice';
 import PurchaseReturn from './components/PurchaseReturn';
 import Reports from './components/Reports';
@@ -24,16 +26,50 @@ import PaymentReceipts from './components/PaymentReceipts';
 import SalesReturn from './components/SalesReturn';
 
 function AppContent() {
-  const { user, loading } = useAuth();
-  const { permissions } = usePermissions();
+  const { user, loading: authLoading } = useAuth();
+  const { permissions, loading: permissionsLoading } = usePermissions();
+  const mapHashToPage = (hash: string): string | null => {
+    if (!hash) return null;
+    if (hash.startsWith('#barcode-print')) return 'barcode-print';
+    const routes: Record<string, string> = {
+      '#dashboard': 'dashboard',
+      '#sales-orders': 'sales-orders',
+      '#billing': 'billing',
+      '#payment-receipts': 'payment-receipts',
+      '#sales-return': 'sales-return',
+      '#pending-deliveries': 'pending-deliveries',
+      '#add-item': 'add-item',
+      '#inventory': 'inventory',
+      '#inventory-edit': 'inventory-edit',
+      '#defective-stock': 'defective-stock',
+      '#purchase-invoice': 'purchase-invoice',
+      '#purchase-return': 'purchase-return',
+      '#reports': 'reports',
+      '#tally-sync': 'tally-sync',
+      '#master-data': 'master-data',
+      '#barcode-management': 'barcode-management',
+      '#user-management': 'user-management',
+      '#customer-management': 'customer-management',
+      '#e-booking': 'e-booking',
+      '#purchase-orders': 'purchase-orders',
+    };
+    return routes[hash] || null;
+  };
+
   const [currentPage, setCurrentPage] = useState(() => {
-    if (window.location.hash.startsWith('#barcode-print')) {
-      return 'barcode-print';
-    }
-    return 'dashboard';
+    return mapHashToPage(window.location.hash) || 'dashboard';
   });
 
-  if (loading) {
+  useEffect(() => {
+    const handleHashChange = () => {
+      const next = mapHashToPage(window.location.hash);
+      if (next) setCurrentPage(next);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  if (authLoading || permissionsLoading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600"></div>
@@ -56,6 +92,8 @@ function AppContent() {
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard />;
+      case 'sales-orders':
+        return permissions.can_manage_sales ? <SalesOrder /> : <UnauthorizedPage />;
       case 'billing':
         return permissions.can_manage_sales ? <Billing /> : <UnauthorizedPage />;
       case 'payment-receipts':
@@ -76,6 +114,8 @@ function AppContent() {
         return permissions.can_manage_purchases ? <PurchaseInvoice /> : <UnauthorizedPage />;
       case 'purchase-return':
         return permissions.can_manage_purchases ? <PurchaseReturn /> : <UnauthorizedPage />;
+      case 'purchase-orders':
+        return permissions.can_manage_purchases ? <PurchaseOrders /> : <UnauthorizedPage />;
       case 'reports':
         return permissions.can_view_reports ? <Reports /> : <UnauthorizedPage />;
       case 'tally-sync':
@@ -96,6 +136,19 @@ function AppContent() {
         return <Dashboard />;
     }
   };
+
+  if (currentPage === 'barcode-print') {
+    // For barcode-print, we allow access if the user has inventory permissions
+    // If permissions are still loading or if they are false, we show a helpful message
+    if (permissions.can_manage_inventory) {
+      return <BarcodePrint />;
+    }
+    
+    // Fallback: If they are logged in and it's a barcode-print page, 
+    // we might want to be slightly more lenient if permissions are failing to load correctly
+    // But for now, let's stick to the permission check and just make it clearer
+    return <UnauthorizedPage />;
+  }
 
   return (
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>

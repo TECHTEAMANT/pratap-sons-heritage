@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { generateBarcodeForItem } from '../utils/barcode';
-import { Barcode as BarcodeIcon, Save, Loader, Upload } from 'lucide-react';
+import { Barcode as BarcodeIcon, Save, Loader, Upload, X } from 'lucide-react';
 
 export default function AddItem() {
   const [loading, setLoading] = useState(false);
@@ -28,6 +27,11 @@ export default function AddItem() {
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const hiddenCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     loadMasterData();
@@ -91,14 +95,85 @@ export default function AddItem() {
     }
   };
 
+  const openCamera = async () => {
+    setCameraError('');
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera not supported by this browser');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch (err) {
+      hiddenCameraInputRef.current?.click();
+    }
+  };
+
+  const closeCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setCameraOpen(false);
+  };
+
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      setFormData(prev => ({ ...prev, imageUrl: dataUrl }));
+    }
+    closeCamera();
+  };
+
+  const clearImage = () => {
+    setFormData(prev => ({ ...prev, imageUrl: '' }));
+    setError('');
+    if (hiddenCameraInputRef.current) {
+      hiddenCameraInputRef.current.value = '';
+    }
+  };
+
+  useEffect(() => {
+    if (cameraOpen && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      const playPromise = videoRef.current.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        playPromise.catch(() => {});
+      }
+    }
+  }, [cameraOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccess('');
 
-    if (!formData.productGroup || !formData.color ||
+    if (!formData.productGroup ||
         !formData.designNo || !formData.vendor || !formData.floor) {
       setError('Please fill in all required fields');
+      return;
+    }
+    if (!formData.imageUrl) {
+      setError('Product image is required');
       return;
     }
 
@@ -235,13 +310,12 @@ export default function AddItem() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Color <span className="text-red-500">*</span>
+                Color
               </label>
               <select
                 value={formData.color}
                 onChange={(e) => setFormData({ ...formData, color: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                required
               >
                 <option value="">Select Color</option>
                 {masters.colors.map((color) => (
@@ -349,7 +423,7 @@ export default function AddItem() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Product Image
+              Product Image <span className="text-red-500">*</span>
             </label>
             <div className="space-y-2">
               <div className="flex gap-2">
@@ -379,6 +453,30 @@ export default function AddItem() {
                     disabled={uploading}
                   />
                 </label>
+                <button
+                  type="button"
+                  onClick={openCamera}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center disabled:opacity-50"
+                  disabled={uploading}
+                >
+                  {uploading ? (
+                    <Loader className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      <Upload className="w-5 h-5 mr-2" />
+                      Take Photo
+                    </>
+                  )}
+                </button>
+                <input
+                  ref={hiddenCameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  disabled={uploading}
+                />
               </div>
               {formData.imageUrl && (
                 <div className="relative w-32 h-32 border border-gray-300 rounded-lg overflow-hidden">
@@ -387,10 +485,21 @@ export default function AddItem() {
                     alt="Product preview"
                     className="w-full h-full object-cover"
                   />
+                  <button
+                    type="button"
+                    onClick={clearImage}
+                    title="Remove image"
+                    className="absolute top-1 right-1 p-1 bg-white/80 rounded-full shadow hover:bg-white"
+                  >
+                    <X className="w-4 h-4 text-gray-700" />
+                  </button>
                 </div>
               )}
+              {cameraError && (
+                <div className="text-red-600 text-sm">{cameraError}</div>
+              )}
             </div>
-            <p className="text-xs text-gray-500 mt-1">Optional: Upload product image (max 5MB)</p>
+            <p className="text-xs text-gray-500 mt-1">Required: Upload or capture a product image (max 5MB)</p>
           </div>
 
           {error && (
@@ -426,6 +535,31 @@ export default function AddItem() {
           </div>
         </form>
       </div>
+      {cameraOpen && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg p-4 w-[92vw] max-w-md">
+            <div className="aspect-video bg-black rounded overflow-hidden">
+              <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            </div>
+            <div className="mt-3 flex gap-3 justify-center">
+              <button
+                type="button"
+                onClick={capturePhoto}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+              >
+                Capture
+              </button>
+              <button
+                type="button"
+                onClick={closeCamera}
+                className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

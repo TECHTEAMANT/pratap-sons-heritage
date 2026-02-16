@@ -37,11 +37,13 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
   const allNavigation = [
     { name: 'Dashboard', icon: LayoutDashboard, page: 'dashboard', requiresPermission: null },
+    { name: 'Sales Orders', icon: ShoppingCart, page: 'sales-orders', requiresPermission: 'can_manage_sales' },
     { name: 'Billing', icon: ShoppingCart, page: 'billing', requiresPermission: 'can_manage_sales' },
     { name: 'Sales Return', icon: PackageX, page: 'sales-return', requiresPermission: 'can_manage_sales' },
     { name: 'Payment Receipts', icon: Receipt, page: 'payment-receipts', requiresPermission: 'can_manage_sales' },
     { name: 'Pending Deliveries', icon: Truck, page: 'pending-deliveries', requiresPermission: 'can_manage_sales' },
     { name: 'E-Booking', icon: Calendar, page: 'e-booking', requiresPermission: 'can_manage_sales' },
+    { name: 'Purchase Orders', icon: FileText, page: 'purchase-orders', requiresPermission: 'can_manage_purchases' },
     { name: 'Purchase Invoice', icon: FileText, page: 'purchase-invoice', requiresPermission: 'can_manage_purchases' },
     { name: 'Purchase Return', icon: PackageX, page: 'purchase-return', requiresPermission: 'can_manage_purchases' },
     { name: 'Add Item', icon: Barcode, page: 'add-item', requiresPermission: 'can_manage_inventory' },

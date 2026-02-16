@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { FileText, Plus, Trash2, Save, Upload, Printer, Edit2, Eye, X } from 'lucide-react';
 import { GSTType } from '../utils/gst';
-import { calculateGSTBreakdown, GSTTransactionType } from '../utils/gstBreakdown';
+import { GSTTransactionType } from '../utils/gstBreakdown';
 import { encodeCostForVendor } from '../utils/costEncoding';
 import { generateBarcodeDataURL } from '../utils/barcodeGenerator';
 
@@ -91,7 +91,12 @@ export default function PurchaseInvoice() {
   });
 
   const [newItemSizes, setNewItemSizes] = useState<SizeQuantity[]>([]);
-  const [uploadingImage, setUploadingImage] = useState(false);
+  const [, setUploadingImage] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const hiddenCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     loadMasterData();
@@ -223,6 +228,77 @@ export default function PurchaseInvoice() {
     }
   };
 
+  const openCamera = async () => {
+    setCameraError('');
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      hiddenCameraInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch (err) {
+      console.error('Error accessing camera:', err);
+      hiddenCameraInputRef.current?.click();
+    }
+  };
+
+  const closeCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setCameraOpen(false);
+  };
+
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      setCurrentItem((prev: any) => ({ ...prev, image_url: dataUrl }));
+    }
+    closeCamera();
+  };
+
+  const clearImage = () => {
+    setCurrentItem((prev: any) => ({ ...prev, image_url: '' }));
+    if (hiddenCameraInputRef.current) {
+      hiddenCameraInputRef.current.value = '';
+    }
+  };
+
+  useEffect(() => {
+    if (cameraOpen && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      const playPromise = videoRef.current.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        playPromise.catch(() => {});
+      }
+    }
+  }, [cameraOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
   const handleInvoiceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -289,8 +365,12 @@ export default function PurchaseInvoice() {
   };
 
   const addItemToList = () => {
-    if (!currentItem.design_no || !currentItem.product_group || !currentItem.color) {
-      setError('Please fill all required fields');
+    if (!currentItem.design_no || !currentItem.product_group) {
+      setError('Please fill all required fields except color');
+      return;
+    }
+    if (!currentItem.image_url) {
+      setError('Please add a product image for this item');
       return;
     }
 
@@ -364,7 +444,6 @@ export default function PurchaseInvoice() {
       const previews: BarcodePreview[] = [];
       const vendor = vendors.find(v => v.id === selectedVendor);
       const vendorCode = vendor?.vendor_code || 'VND';
-      const vendorName = vendor?.name || '';
 
       let previewCounter = 1;
 
@@ -379,9 +458,18 @@ export default function PurchaseInvoice() {
           const mockBarcodeNumber = String(previewCounter).padStart(8, '0');
           previewCounter++;
 
-          const orderSuffix = item.order_number ? `ORD${item.order_number}` : '';
-          const encodedCost = encodeCostForVendor(item.cost_per_item, vendorName);
-          const structuredBarcode = `${productGroup?.group_code || 'PG'}${color?.color_code || 'CL'}${size?.size_code || 'SZ'}${item.design_no}${vendorCode}${encodedCost}${orderSuffix}${mockBarcodeNumber}`;
+          const groupCode = productGroup?.group_code || 'PG';
+          const colorCode = color?.color_code || '';
+          const designPart = colorCode ? `${item.design_no}${colorCode}` : item.design_no;
+          const encodedPrice = encodeCostForVendor(item.mrp, 'CRAZY WOMEN');
+          const parts = [
+            groupCode,
+            designPart,
+            vendorCode,
+            encodedPrice,
+            mockBarcodeNumber,
+          ].filter(Boolean);
+          const structuredBarcode = parts.join('-');
 
           previews.push({
             barcode_8digit: mockBarcodeNumber,
@@ -448,7 +536,6 @@ export default function PurchaseInvoice() {
       const totalAmount = calculateTotal();
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
       const finalGST = parseFloat(manualGST || '0');
-      const gstBreakdown = calculateGSTBreakdown(finalGST, gstType);
 
       const { data: po, error: poError } = await supabase
         .from('purchase_orders')
@@ -475,7 +562,6 @@ export default function PurchaseInvoice() {
 
       const vendor = vendors.find(v => v.id === selectedVendor);
       const vendorCode = vendor?.vendor_code || 'VND';
-      const vendorName = vendor?.name || '';
 
       for (const item of items) {
         for (const sizeQty of item.sizes) {
@@ -502,7 +588,6 @@ export default function PurchaseInvoice() {
 
           const productGroup = productGroups.find(g => g.id === item.product_group);
           const color = colors.find(c => c.id === item.color);
-          const size = sizes.find(s => s.id === sizeQty.size);
           const floorId = productGroup?.floor_id;
 
           const { data: existingBatch } = await supabase
@@ -533,9 +618,18 @@ export default function PurchaseInvoice() {
             const { data: barcodeNumber } = await supabase.rpc('get_next_barcode_number');
             const barcodeString = String(barcodeNumber).padStart(8, '0');
 
-            const orderSuffix = item.order_number ? `ORD${item.order_number}` : '';
-            const encodedCost = encodeCostForVendor(item.cost_per_item, vendorName);
-            const structuredBarcode = `${productGroup?.group_code || 'PG'}${color?.color_code || 'CL'}${size?.size_code || 'SZ'}${item.design_no}${vendorCode}${encodedCost}${orderSuffix}${barcodeString}`;
+            const groupCode = productGroup?.group_code || 'PG';
+            const colorCode = color?.color_code || '';
+            const designPart = colorCode ? `${item.design_no}${colorCode}` : item.design_no;
+            const encodedPrice = encodeCostForVendor(item.mrp, 'CRAZY WOMEN');
+            const parts = [
+              groupCode,
+              designPart,
+              vendorCode,
+              encodedPrice,
+              barcodeString,
+            ].filter(Boolean);
+            const structuredBarcode = parts.join('-');
 
             await supabase
               .from('barcode_batches')
@@ -585,7 +679,11 @@ export default function PurchaseInvoice() {
 
   const handlePrintBarcodes = () => {
     if (savedPOId) {
-      window.open(`#barcode-print?po_id=${savedPOId}`, '_blank');
+      try {
+        sessionStorage.setItem('returnTo', '#purchase-invoice');
+      } catch {}
+      const printUrl = `${window.location.origin}${window.location.pathname}#barcode-print?po_id=${savedPOId}&auto=1`;
+      window.location.assign(printUrl);
     }
   };
 
@@ -834,7 +932,7 @@ export default function PurchaseInvoice() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Color <span className="text-red-500">*</span>
+                    Color
                   </label>
                   <select
                     value={currentItem.color}
@@ -933,25 +1031,60 @@ export default function PurchaseInvoice() {
 
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Product Image
+                  Product Image <span className="text-red-500">*</span>
                 </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={currentItem.image_url ? 'Image uploaded' : ''}
-                    readOnly
-                    className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg bg-gray-50"
-                    placeholder="No image"
-                  />
-                  <label className="px-4 py-2 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-lg hover:from-gray-700 hover:to-gray-800 cursor-pointer shadow-md">
-                    <Upload className="w-5 h-5" />
+                <div className="space-y-2">
+                  <div className="flex gap-2">
                     <input
+                      type="text"
+                      value={currentItem.image_url ? 'Image added' : ''}
+                      readOnly
+                      className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg bg-gray-50"
+                      placeholder="No image"
+                    />
+                    <label className="px-4 py-2 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-lg hover:from-gray-700 hover:to-gray-800 cursor-pointer shadow-md flex items-center">
+                      <Upload className="w-5 h-5 mr-2" />
+                      Upload
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={openCamera}
+                      className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-md"
+                    >
+                      Take Photo
+                    </button>
+                    <input
+                      ref={hiddenCameraInputRef}
                       type="file"
                       accept="image/*"
+                      capture="environment"
                       onChange={handleImageUpload}
                       className="hidden"
                     />
-                  </label>
+                  </div>
+                  {currentItem.image_url && (
+                    <div className="relative w-32 h-32 border-2 border-gray-300 rounded-lg overflow-hidden">
+                      <img
+                        src={currentItem.image_url}
+                        alt="Product"
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={clearImage}
+                        title="Remove image"
+                        className="absolute top-1 right-1 p-1 bg-white/80 rounded-full shadow hover:bg-white"
+                      >
+                        <X className="w-4 h-4 text-gray-700" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1229,6 +1362,43 @@ export default function PurchaseInvoice() {
           </button>
         </div>
       </div>
+
+      {cameraOpen && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg p-4 w-[92vw] max-w-md">
+            <div className="aspect-video bg-black rounded overflow-hidden">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <div className="mt-3 flex gap-3 justify-center">
+              <button
+                type="button"
+                onClick={capturePhoto}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+              >
+                Capture
+              </button>
+              <button
+                type="button"
+                onClick={closeCamera}
+                className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
+            {cameraError && (
+              <div className="text-red-600 text-sm mt-2 text-center">
+                {cameraError}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {showBarcodePreview && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
