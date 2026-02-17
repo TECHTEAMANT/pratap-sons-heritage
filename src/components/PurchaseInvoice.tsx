@@ -9,12 +9,14 @@ import { generateBarcodeDataURL } from '../utils/barcodeGenerator';
 interface SizeQuantity {
   size: string;
   quantity: number;
+  print_quantity?: number;
 }
 
 interface PurchaseItem {
   id?: string;
   design_no: string;
   product_group: string;
+  floor_id?: string;
   color: string;
   sizes: SizeQuantity[];
   cost_per_item: number;
@@ -24,6 +26,8 @@ interface PurchaseItem {
   image_url: string;
   description: string;
   order_number: string;
+  barcodes_per_item: number;
+  payout_code?: string;
 }
 
 interface BarcodePreview {
@@ -34,6 +38,7 @@ interface BarcodePreview {
   color: string;
   size: string;
   quantity: number;
+  print_quantity?: number;
   cost: number;
   mrp: number;
   order_number: string;
@@ -44,6 +49,7 @@ export default function PurchaseInvoice() {
   const [productGroups, setProductGroups] = useState<any[]>([]);
   const [colors, setColors] = useState<any[]>([]);
   const [sizes, setSizes] = useState<any[]>([]);
+  const [floors, setFloors] = useState<any[]>([]);
   const [existingDesigns, setExistingDesigns] = useState<any[]>([]);
 
   const [selectedVendor, setSelectedVendor] = useState('');
@@ -79,7 +85,9 @@ export default function PurchaseInvoice() {
   const [currentItem, setCurrentItem] = useState<any>({
     design_no: '',
     product_group: '',
+    floor_id: '',
     color: '',
+    barcodes_per_item: 1,
     sizes: [],
     cost_per_item: '',
     mrp_markup_percent: '',
@@ -110,9 +118,38 @@ export default function PurchaseInvoice() {
 
   useEffect(() => {
     if (sizes.length > 0) {
-      setNewItemSizes(sizes.map(s => ({ size: s.id, quantity: 0 })));
+      setNewItemSizes(sizes.map(s => ({ 
+        size: s.id, 
+        quantity: 0, 
+        print_quantity: 0 
+      })));
     }
   }, [sizes]);
+
+  useEffect(() => {
+    if (currentItem.product_group) {
+      const group = productGroups.find(g => g.id === currentItem.product_group);
+      if (group?.floor_id) {
+        setCurrentItem((prev: any) => ({ ...prev, floor_id: group.floor_id }));
+      }
+      
+      // Reset print qty when group changes (and maintain default barcodes_per_item)
+      const barcodesPerItem = currentItem.barcodes_per_item || 1;
+      setNewItemSizes(prev => prev.map(s => ({
+        ...s,
+        print_quantity: s.quantity * barcodesPerItem
+      })));
+    }
+  }, [currentItem.product_group]);
+
+  useEffect(() => {
+    // When barcodes_per_item changes, update print_quantity for all sizes
+    const barcodesPerItem = parseInt(currentItem.barcodes_per_item) || 1;
+    setNewItemSizes(prev => prev.map(s => ({
+      ...s,
+      print_quantity: s.quantity * barcodesPerItem
+    })));
+  }, [currentItem.barcodes_per_item]);
 
   useEffect(() => {
     const total = calculateTotal();
@@ -155,35 +192,69 @@ export default function PurchaseInvoice() {
 
   const loadMasterData = async () => {
     try {
-      const [vendorsRes, groupsRes, colorsRes, sizesRes] = await Promise.all([
+      const [vendorsRes, groupsRes, colorsRes, sizesRes, floorsRes] = await Promise.all([
         supabase.from('vendors').select('*').eq('active', true),
         supabase.from('product_groups').select('*, floors:floor_id(id, name, floor_code)'),
         supabase.from('colors').select('*'),
         supabase.from('sizes').select('*').order('sort_order'),
+        supabase.from('floors').select('*').eq('active', true),
       ]);
 
       setVendors(vendorsRes.data || []);
       setProductGroups(groupsRes.data || []);
       setColors(colorsRes.data || []);
       setSizes(sizesRes.data || []);
+      setFloors(floorsRes.data || []);
     } catch (err) {
       console.error('Error loading master data:', err);
     }
   };
 
   const loadExistingDesigns = async () => {
+    if (!selectedVendor) {
+      setExistingDesigns([]);
+      return;
+    }
+
     try {
-      const { data } = await supabase
+      // Fetch from product_masters instead of barcode_batches
+      const { data, error } = await supabase
         .from('product_masters')
         .select(`
-          *,
+          id,
+          design_no,
           product_group:product_groups(id, name, group_code),
           color:colors(id, name, color_code),
-          vendor:vendors(id, name, vendor_code)
+          vendor:vendors(id, name, vendor_code),
+          gst_logic,
+          photos,
+          description,
+          mrp,
+          floor,
+          barcodes_per_item,
+          payout_code
         `)
         .eq('vendor', selectedVendor);
 
-      setExistingDesigns(data || []);
+      if (error) throw error;
+
+      // product_masters should be unique by definition, but we can map it directly
+      const designs = (data || []).map((row: any) => ({
+        id: row.id,
+        design_no: row.design_no,
+        product_group: row.product_group,
+        color: row.color,
+        vendor: row.vendor,
+        gst_logic: row.gst_logic,
+        photos: row.photos || [],
+        description: row.description || '',
+        mrp: row.mrp,
+        floor: row.floor,
+        barcodes_per_item: row.barcodes_per_item || 1,
+        payout_code: row.payout_code || '',
+      }));
+
+      setExistingDesigns(designs);
     } catch (err) {
       console.error('Error loading existing designs:', err);
     }
@@ -323,13 +394,15 @@ export default function PurchaseInvoice() {
     if (design) {
       setCurrentItem({
         design_no: design.design_no,
-        product_group: design.product_group.id,
-        color: design.color.id,
+        product_group: design.product_group?.id || '',
+        floor_id: design.floor || '',
+        color: design.color?.id || '',
         sizes: [],
         cost_per_item: '',
         mrp_markup_percent: '',
         mrp: '',
         gst_logic: design.gst_logic,
+        barcodes_per_item: design.barcodes_per_item || 1,
         image_url: design.photos?.[0] || '',
         description: design.description || '',
         order_number: '',
@@ -394,12 +467,20 @@ export default function PurchaseInvoice() {
       return;
     }
 
+    const barcodesPerItem = parseInt(currentItem.barcodes_per_item) || 1;
+
+    const sizesWithPrintQty = sizesWithQty.map(s => ({
+      ...s,
+      print_quantity: s.quantity * barcodesPerItem
+    }));
+
     const newItem = {
       ...currentItem,
       cost_per_item: cost,
       mrp: mrp,
       mrp_markup_percent: markup,
-      sizes: sizesWithQty,
+      barcodes_per_item: barcodesPerItem,
+      sizes: sizesWithPrintQty,
     } as PurchaseItem;
 
     if (editingIndex !== null) {
@@ -414,7 +495,9 @@ export default function PurchaseInvoice() {
     setCurrentItem({
       design_no: '',
       product_group: '',
+      floor_id: '',
       color: '',
+      barcodes_per_item: 1,
       sizes: [],
       cost_per_item: 0,
       mrp_markup_percent: 100,
@@ -423,9 +506,10 @@ export default function PurchaseInvoice() {
       image_url: '',
       description: '',
       order_number: '',
+      payout_code: '',
     });
     setSelectedDesignId('');
-    setNewItemSizes(sizes.map(s => ({ size: s.id, quantity: 0 })));
+    setNewItemSizes(sizes.map(s => ({ size: s.id, quantity: 0, print_quantity: 0 })));
     setShowItemForm(false);
     setError('');
   };
@@ -479,6 +563,7 @@ export default function PurchaseInvoice() {
             color: color?.name || '',
             size: size?.name || '',
             quantity: sizeQty.quantity,
+            print_quantity: sizeQty.print_quantity ?? sizeQty.quantity,
             cost: item.cost_per_item,
             mrp: item.mrp,
             order_number: item.order_number || '',
@@ -573,7 +658,7 @@ export default function PurchaseInvoice() {
               po_id: po.id,
               design_no: item.design_no,
               product_group: item.product_group,
-              color: item.color,
+              color: item.color && item.color !== "" ? item.color : null,
               size: sizeQty.size,
               quantity: sizeQty.quantity,
               cost_per_item: item.cost_per_item,
@@ -590,17 +675,24 @@ export default function PurchaseInvoice() {
           const color = colors.find(c => c.id === item.color);
           const floorId = productGroup?.floor_id;
 
-          const { data: existingBatch } = await supabase
+          let query = supabase
             .from('barcode_batches')
             .select('*')
             .eq('design_no', item.design_no)
             .eq('product_group', item.product_group)
-            .eq('color', item.color)
             .eq('size', sizeQty.size)
             .eq('vendor', selectedVendor)
-            .eq('cost_actual', item.cost_per_item)
-            .eq('mrp', item.mrp)
-            .eq('gst_logic', item.gst_logic)
+            .eq('status', 'active');
+            
+            if (item.color) {
+              query.eq('color', item.color);
+            } else {
+              query.is('color', null);
+            }
+            
+          const { data: existingBatch } = await query
+            .order('created_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
 
           if (existingBatch) {
@@ -609,7 +701,12 @@ export default function PurchaseInvoice() {
               .update({
                 total_quantity: existingBatch.total_quantity + sizeQty.quantity,
                 available_quantity: existingBatch.available_quantity + sizeQty.quantity,
-                floor: floorId || existingBatch.floor,
+                floor: (item.floor_id && item.floor_id !== "") ? item.floor_id : (floorId || existingBatch.floor || null),
+                print_quantity: sizeQty.print_quantity ?? sizeQty.quantity,
+                cost_actual: item.cost_per_item,
+                mrp: item.mrp,
+                mrp_markup_percent: item.mrp_markup_percent,
+                gst_logic: item.gst_logic,
                 modified_by: userRecord?.id || null,
                 updated_at: new Date().toISOString(),
               })
@@ -639,7 +736,7 @@ export default function PurchaseInvoice() {
                 design_no: item.design_no,
                 product_group: item.product_group,
                 size: sizeQty.size,
-                color: item.color,
+                color: item.color && item.color !== "" ? item.color : null,
                 vendor: selectedVendor,
                 cost_actual: item.cost_per_item,
                 mrp: item.mrp,
@@ -647,17 +744,24 @@ export default function PurchaseInvoice() {
                 gst_logic: item.gst_logic,
                 total_quantity: sizeQty.quantity,
                 available_quantity: sizeQty.quantity,
-                floor: floorId,
+                floor: (item.floor_id && item.floor_id !== "") ? item.floor_id : (floorId || null),
+                print_quantity: sizeQty.print_quantity ?? sizeQty.quantity,
                 status: 'active',
                 po_id: po.id,
                 photos: item.image_url ? [item.image_url] : [],
                 description: item.description,
                 order_number: item.order_number || null,
                 created_by: userRecord?.id || null,
+                payout_code: item.payout_code || null,
               }]);
           }
         }
       }
+
+      await supabase
+        .from('purchase_orders')
+        .update({ status: 'Completed' })
+        .eq('id', po.id);
 
       setSuccess(`Purchase Invoice ${poNumber} created successfully! ${totalItems} items added to inventory.`);
       setSavedPOId(po.id);
@@ -887,7 +991,7 @@ export default function PurchaseInvoice() {
                       <option value="">Select Design</option>
                       {existingDesigns.map(design => (
                         <option key={design.id} value={design.id}>
-                          {design.design_no} - {design.product_group.name} - {design.color.name}
+                          {design.design_no} - {design.product_group?.name || 'Unknown'} - {design.color?.name || 'No Color'}
                         </option>
                       ))}
                     </select>
@@ -932,13 +1036,43 @@ export default function PurchaseInvoice() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Floor
+                  </label>
+                  <select
+                    value={currentItem.floor_id}
+                    onChange={(e) => setCurrentItem({ ...currentItem, floor_id: e.target.value })}
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="">Default Floor</option>
+                    {floors.map(f => (
+                      <option key={f.id} value={f.id}>{f.name} ({f.floor_code})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Barcodes per Item
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={currentItem.barcodes_per_item || 1}
+                    onChange={(e) => setCurrentItem({ ...currentItem, barcodes_per_item: parseInt(e.target.value) || 1 })}
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Number of labels to print for each item</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Color
                   </label>
                   <select
                     value={currentItem.color}
                     onChange={(e) => setCurrentItem({ ...currentItem, color: e.target.value })}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
-                    disabled={itemMode === 'existing'}
+                    disabled={itemMode === 'existing' && !!existingDesigns.find(d => d.id === selectedDesignId)?.color}
                   >
                     <option value="">Select</option>
                     {colors.map(c => (
@@ -1092,22 +1226,27 @@ export default function PurchaseInvoice() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Size Quantities
                 </label>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
                   {newItemSizes.map((sq, idx) => {
                     const size = sizes.find(s => s.id === sq.size);
                     return (
-                      <div key={sq.size}>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">{size?.name}</label>
+                      <div key={sq.size} className="bg-gray-50 p-2 rounded border border-gray-200">
+                        <label className="block text-xs font-bold text-gray-700 mb-1 text-center truncate" title={size?.name}>{size?.name}</label>
                         <input
                           type="number"
                           min="0"
                           value={sq.quantity}
                           onChange={(e) => {
+                            const val = parseInt(e.target.value) || 0;
                             const updated = [...newItemSizes];
-                            updated[idx].quantity = parseInt(e.target.value) || 0;
+                            updated[idx].quantity = val;
+                            // We don't need to manually update print_quantity here as it's calculated on save
+                            // But for preview consistency, we can update it if we want
+                            updated[idx].print_quantity = val * (currentItem.barcodes_per_item || 1);
                             setNewItemSizes(updated);
                           }}
-                          className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:ring-2 focus:ring-emerald-500"
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-center focus:ring-2 focus:ring-emerald-500 font-bold"
+                          placeholder="0"
                         />
                       </div>
                     );
@@ -1422,7 +1561,7 @@ export default function PurchaseInvoice() {
                       <th className="border-2 border-gray-300 p-3 text-left font-bold">Structured Barcode</th>
                       <th className="border-2 border-gray-300 p-3 text-left font-bold">Design</th>
                       <th className="border-2 border-gray-300 p-3 text-left font-bold">Details</th>
-                      <th className="border-2 border-gray-300 p-3 text-left font-bold">Qty</th>
+                      <th className="border-2 border-gray-300 p-3 text-left font-bold">Qty / Print</th>
                       <th className="border-2 border-gray-300 p-3 text-left font-bold">Cost</th>
                       <th className="border-2 border-gray-300 p-3 text-left font-bold">MRP</th>
                     </tr>
@@ -1458,7 +1597,9 @@ export default function PurchaseInvoice() {
                             <div className="text-gray-600">{preview.color} - {preview.size}</div>
                             {preview.order_number && <div className="text-orange-600 font-semibold">Order: {preview.order_number}</div>}
                           </td>
-                          <td className="border-2 border-gray-300 p-3 text-center font-bold">{preview.quantity}</td>
+                          <td className="border-2 border-gray-300 p-3 text-center font-bold">
+                            {preview.quantity} {preview.quantity !== preview.print_quantity && <span className="text-blue-600">({preview.print_quantity})</span>}
+                          </td>
                           <td className="border-2 border-gray-300 p-3 text-right font-semibold">₹{preview.cost}</td>
                           <td className="border-2 border-gray-300 p-3 text-right font-semibold">₹{preview.mrp}</td>
                         </tr>

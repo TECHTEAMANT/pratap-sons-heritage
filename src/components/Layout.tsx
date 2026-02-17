@@ -21,7 +21,6 @@ import {
   Truck,
   Receipt,
   AlertTriangle,
-  Edit,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -48,7 +47,6 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     { name: 'Purchase Return', icon: PackageX, page: 'purchase-return', requiresPermission: 'can_manage_purchases' },
     { name: 'Add Item', icon: Barcode, page: 'add-item', requiresPermission: 'can_manage_inventory' },
     { name: 'Inventory', icon: Package, page: 'inventory', requiresPermission: 'can_manage_inventory' },
-    { name: 'Edit Inventory', icon: Edit, page: 'inventory-edit', requiresPermission: 'can_manage_inventory' },
     { name: 'Defective Stock', icon: AlertTriangle, page: 'defective-stock', requiresPermission: 'can_manage_inventory' },
     { name: 'Barcode Management', icon: Printer, page: 'barcode-management', requiresPermission: 'can_manage_inventory' },
     { name: 'Reports', icon: BarChart3, page: 'reports', requiresPermission: 'can_view_reports' },

@@ -1,0 +1,1 @@
+ALTER TABLE product_masters ALTER COLUMN color DROP NOT NULL;

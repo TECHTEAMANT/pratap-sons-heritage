@@ -1,0 +1,1 @@
+ALTER TABLE barcode_batches ALTER COLUMN color DROP NOT NULL;

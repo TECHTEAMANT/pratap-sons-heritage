@@ -1,0 +1,1 @@
+ALTER TABLE purchase_items ALTER COLUMN color DROP NOT NULL;

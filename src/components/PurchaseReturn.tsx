@@ -110,15 +110,16 @@ export default function PurchaseReturn() {
 
     try {
       const { data, error } = await supabase
-        .from('product_items')
+        .from('barcode_batches')
         .select(`
           *,
-          product_groups (name),
-          colors (name),
-          sizes (name)
+          product_group:product_groups (name),
+          color:colors (name),
+          size:sizes (name)
         `)
         .eq('vendor', formData.vendorId)
-        .in('status', ['Available', 'Sold'])
+        .eq('status', 'active')
+        .gt('available_quantity', 0)
         .order('created_at', { ascending: false })
         .limit(500);
 
@@ -130,27 +131,21 @@ export default function PurchaseReturn() {
   };
 
   const addManualItem = (item: any) => {
-    const alreadyAdded = returnItems.find(i => i.barcode_id === item.barcode_id);
+    const alreadyAdded = returnItems.find(i => i.barcode_id === item.barcode_alias_8digit);
     if (alreadyAdded) {
       setError('This item is already in the return list');
       setTimeout(() => setError(''), 3000);
       return;
     }
 
-    if (item.status === 'Returned') {
-      setError('This item has already been returned');
-      setTimeout(() => setError(''), 3000);
-      return;
-    }
-
     const newItem: ReturnItem = {
       item_id: item.id,
-      barcode_id: item.barcode_id,
+      barcode_id: item.barcode_alias_8digit,
       design_no: item.design_no,
-      product_group: item.product_groups?.name || '',
-      color: item.colors?.name || '',
-      size: item.sizes?.name || '',
-      cost: item.cost || 0,
+      product_group: item.product_group?.name || '',
+      color: item.color?.name || '',
+      size: item.size?.name || '',
+      cost: item.cost_actual || 0,
       condition: 'defective',
       reason: '',
     };
@@ -171,14 +166,15 @@ export default function PurchaseReturn() {
     setError('');
     try {
       const { data, error } = await supabase
-        .from('product_items')
+        .from('barcode_batches')
         .select(`
           *,
-          product_groups (name),
-          colors (name),
-          sizes (name)
+          product_group:product_groups (name),
+          color:colors (name),
+          size:sizes (name)
         `)
-        .eq('barcode_id', barcodeSearch.trim())
+        .eq('barcode_alias_8digit', barcodeSearch.trim())
+        .eq('status', 'active')
         .maybeSingle();
 
       if (error) throw error;
@@ -188,12 +184,12 @@ export default function PurchaseReturn() {
         return;
       }
 
-      if (data.status === 'Returned') {
-        setError('This item has already been returned');
+      if (formData.vendorId && data.vendor !== formData.vendorId) {
+        setError('This barcode belongs to a different vendor');
         return;
       }
 
-      const alreadyAdded = returnItems.find(item => item.barcode_id === data.barcode_id);
+      const alreadyAdded = returnItems.find(item => item.barcode_id === data.barcode_alias_8digit);
       if (alreadyAdded) {
         setError('This item is already in the return list');
         return;
@@ -201,12 +197,12 @@ export default function PurchaseReturn() {
 
       const newItem: ReturnItem = {
         item_id: data.id,
-        barcode_id: data.barcode_id,
+        barcode_id: data.barcode_alias_8digit,
         design_no: data.design_no,
-        product_group: data.product_groups?.name || '',
-        color: data.colors?.name || '',
-        size: data.sizes?.name || '',
-        cost: data.cost || 0,
+        product_group: data.product_group?.name || '',
+        color: data.color?.name || '',
+        size: data.size?.name || '',
+        cost: data.cost_actual || 0,
         condition: 'defective',
         reason: '',
       };
@@ -718,21 +714,21 @@ export default function PurchaseReturn() {
                       if (!searchQuery) return true;
                       const query = searchQuery.toLowerCase();
                       return (
-                        item.barcode_id?.toLowerCase().includes(query) ||
-                        item.design_no?.toLowerCase().includes(query) ||
-                        item.product_groups?.name?.toLowerCase().includes(query) ||
-                        item.colors?.name?.toLowerCase().includes(query) ||
-                        item.sizes?.name?.toLowerCase().includes(query)
+                        (item.barcode_alias_8digit || '').toLowerCase().includes(query) ||
+                        (item.design_no || '').toLowerCase().includes(query) ||
+                        item.product_group?.name?.toLowerCase().includes(query) ||
+                        item.color?.name?.toLowerCase().includes(query) ||
+                        item.size?.name?.toLowerCase().includes(query)
                       );
                     })
                     .slice(0, 100)
                     .map((item) => (
                       <tr key={item.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm font-mono">{item.barcode_id}</td>
+                        <td className="px-4 py-3 text-sm font-mono">{item.barcode_alias_8digit}</td>
                         <td className="px-4 py-3 text-sm">{item.design_no}</td>
-                        <td className="px-4 py-3 text-sm">{item.product_groups?.name}</td>
-                        <td className="px-4 py-3 text-sm">{item.colors?.name}</td>
-                        <td className="px-4 py-3 text-sm">{item.sizes?.name}</td>
+                        <td className="px-4 py-3 text-sm">{item.product_group?.name}</td>
+                        <td className="px-4 py-3 text-sm">{item.color?.name}</td>
+                        <td className="px-4 py-3 text-sm">{item.size?.name}</td>
                         <td className="px-4 py-3 text-sm">
                           <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
                             item.status === 'Available' ? 'bg-green-100 text-green-800' :
@@ -742,7 +738,7 @@ export default function PurchaseReturn() {
                             {item.status}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-sm text-right">₹{item.cost?.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-right">₹{(item.cost_actual || 0).toFixed(2)}</td>
                         <td className="px-4 py-3 text-center">
                           <button
                             onClick={() => addManualItem(item)}
@@ -760,9 +756,9 @@ export default function PurchaseReturn() {
                 if (!searchQuery) return true;
                 const query = searchQuery.toLowerCase();
                 return (
-                  item.barcode_id?.toLowerCase().includes(query) ||
-                  item.design_no?.toLowerCase().includes(query) ||
-                  item.product_groups?.name?.toLowerCase().includes(query)
+                  (item.barcode_alias_8digit || '').toLowerCase().includes(query) ||
+                  (item.design_no || '').toLowerCase().includes(query) ||
+                  item.product_group?.name?.toLowerCase().includes(query)
                 );
               }).length === 0 && (
                 <div className="text-center py-12 text-gray-500">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Package, Search, Image as ImageIcon, RefreshCw, Edit2, X, Save } from 'lucide-react';
 
@@ -36,7 +36,6 @@ interface GroupedItem {
 
 export default function Inventory() {
   const [groupedItems, setGroupedItems] = useState<GroupedItem[]>([]);
-  const [defectiveStock, setDefectiveStock] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -78,7 +77,6 @@ export default function Inventory() {
 
       if (batchesRes.error) throw batchesRes.error;
 
-      setDefectiveStock(defectiveRes.data || []);
       setFloors(floorsRes.data || []);
       const grouped = groupItemsByDesignVendor(batchesRes.data || [], defectiveRes.data || []);
       setGroupedItems(grouped);
@@ -143,7 +141,7 @@ export default function Inventory() {
 
       const defectiveForBarcode = defectiveItems.filter(d => d.barcode === item.barcode_alias_8digit);
       const defectiveQty = defectiveForBarcode.reduce((sum, d) => sum + (d.quantity || 0), 0);
-      groupMap[key].sizes[sizeKey].defective_qty = defectiveQty;
+      groupMap[key].sizes[sizeKey].defective_qty += defectiveQty;
       groupMap[key].total_defective += defectiveQty;
 
       if (item.photos && item.photos.length > 0 && groupMap[key].images.length === 0) {

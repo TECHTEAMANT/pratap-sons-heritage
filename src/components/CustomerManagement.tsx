@@ -15,10 +15,26 @@ interface Customer {
   total_purchases: number;
   total_visits: number;
   last_purchase_date: string | null;
+  birthday: string | null;
+  anniversary: string | null;
   status: string;
   notes: string | null;
   created_at: string;
 }
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-');
+  const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+};
+
+const isToday = (dateStr: string) => {
+  if (!dateStr) return false;
+  const today = new Date();
+  const [year, month, day] = dateStr.split('-');
+  return today.getDate() === parseInt(day) && (today.getMonth() + 1) === parseInt(month);
+};
 
 export default function CustomerManagement() {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -38,6 +54,8 @@ export default function CustomerManagement() {
     city: '',
     pincode: '',
     gstin: '',
+    birthday: '',
+    anniversary: '',
     status: 'active',
     notes: '',
   });
@@ -103,6 +121,8 @@ export default function CustomerManagement() {
         city: formData.city || null,
         pincode: formData.pincode || null,
         gstin: formData.gstin || null,
+        birthday: formData.birthday || null,
+        anniversary: formData.anniversary || null,
         status: formData.status,
         notes: formData.notes || null,
       };
@@ -146,6 +166,8 @@ export default function CustomerManagement() {
       city: customer.city || '',
       pincode: customer.pincode || '',
       gstin: customer.gstin || '',
+      birthday: customer.birthday || '',
+      anniversary: customer.anniversary || '',
       status: customer.status,
       notes: customer.notes || '',
     });
@@ -179,6 +201,8 @@ export default function CustomerManagement() {
       city: '',
       pincode: '',
       gstin: '',
+      birthday: '',
+      anniversary: '',
       status: 'active',
       notes: '',
     });
@@ -252,6 +276,7 @@ export default function CustomerManagement() {
                 <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">Loyalty Points</th>
                 <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">Total Purchases</th>
                 <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Visits</th>
+                <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Special Dates</th>
                 <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Status</th>
                 <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Actions</th>
               </tr>
@@ -271,6 +296,18 @@ export default function CustomerManagement() {
                     ₹{(customer.total_purchases || 0).toFixed(2)}
                   </td>
                   <td className="px-4 py-3 text-center">{customer.total_visits || 0}</td>
+                  <td className="px-4 py-3 text-center text-xs">
+                    {customer.birthday && (
+                      <div className={`${isToday(customer.birthday) ? 'text-pink-600 font-bold bg-pink-100 px-2 py-1 rounded animate-pulse' : 'text-pink-600 font-semibold'}`} title="Birthday">
+                        🎂 {formatDate(customer.birthday)} {isToday(customer.birthday) && '(Today!)'}
+                      </div>
+                    )}
+                    {customer.anniversary && (
+                      <div className={`${isToday(customer.anniversary) ? 'text-purple-600 font-bold bg-purple-100 px-2 py-1 rounded animate-pulse' : 'text-purple-600 font-semibold'}`} title="Anniversary">
+                        💑 {formatDate(customer.anniversary)} {isToday(customer.anniversary) && '(Today!)'}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-center">
                     <span className={`px-2 py-1 rounded text-xs font-semibold ${
                       customer.status === 'active'
@@ -380,6 +417,30 @@ export default function CustomerManagement() {
                     onChange={(e) => setFormData({ ...formData, gstin: e.target.value.toUpperCase() })}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     maxLength={15}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Birthday
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.birthday}
+                    onChange={(e) => setFormData({ ...formData, birthday: e.target.value })}
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Anniversary
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.anniversary}
+                    onChange={(e) => setFormData({ ...formData, anniversary: e.target.value })}
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
 

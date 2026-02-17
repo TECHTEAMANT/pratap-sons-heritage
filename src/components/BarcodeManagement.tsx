@@ -162,7 +162,7 @@ export default function BarcodeManagement() {
     } catch {}
 
     // Navigate in the same tab and auto-trigger print
-    const printUrl = `${window.location.origin}${window.location.pathname}#barcode-print?batch_id=${printBarcode?.id}&quantity=${printQuantity}&alias=${printBarcode?.barcode_alias_8digit}&design=${printBarcode?.design_no}&mrp=${printBarcode?.mrp}&product=${encodeURIComponent(printBarcode?.product_group?.name || '')}&color=${encodeURIComponent(printBarcode?.color?.name || '')}&size=${encodeURIComponent(printBarcode?.size?.name || '')}&vendor_code=${encodeURIComponent(printBarcode?.vendor?.vendor_code || '')}&auto=1`;
+    const printUrl = `${window.location.origin}${window.location.pathname}#barcode-print?batch_id=${printBarcode?.id}&quantity=${printQuantity}&alias=${printBarcode?.barcode_alias_8digit}&design=${printBarcode?.design_no}&mrp=${printBarcode?.mrp}&product=${encodeURIComponent(printBarcode?.product_group?.name || '')}&color=${encodeURIComponent(printBarcode?.color?.name || '')}&size=${encodeURIComponent(printBarcode?.size?.name || '')}&vendor_code=${encodeURIComponent(printBarcode?.vendor?.vendor_code || '')}&discount_type=${printBarcode?.discount_type || ''}&discount_value=${printBarcode?.discount_value || ''}&auto=1`;
     window.location.assign(printUrl);
     setShowPrintDialog(false);
     setPrintBarcode(null);

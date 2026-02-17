@@ -22,6 +22,7 @@ export default function AddItem() {
     imageUrl: '',
     description: '',
     payoutCode: '',
+    barcodesPerItem: 1,
   });
 
   const [success, setSuccess] = useState('');
@@ -36,6 +37,15 @@ export default function AddItem() {
   useEffect(() => {
     loadMasterData();
   }, []);
+
+  useEffect(() => {
+    if (formData.productGroup) {
+      const group = masters.productGroups.find(g => g.id === formData.productGroup);
+      if (group?.floor_id) {
+        setFormData(prev => ({ ...prev, floor: group.floor_id }));
+      }
+    }
+  }, [formData.productGroup, masters.productGroups]);
 
   const loadMasterData = async () => {
     try {
@@ -177,9 +187,7 @@ export default function AddItem() {
       return;
     }
 
-    const cost = 0;
     const mrp = 0;
-    const quantity = 0;
 
     setLoading(true);
 
@@ -192,70 +200,33 @@ export default function AddItem() {
         .eq('auth_user_id', userData?.user?.id)
         .maybeSingle();
 
-      const { data: pgData } = await supabase
-        .from('product_groups')
-        .select('group_code')
-        .eq('id', formData.productGroup)
-        .maybeSingle();
-
-      const { data: colorData } = await supabase
-        .from('colors')
-        .select('color_code')
-        .eq('id', formData.color)
-        .maybeSingle();
-
-      const { data: defaultSize } = await supabase
-        .from('sizes')
-        .select('id, size_code')
-        .order('sort_order')
-        .limit(1)
-        .maybeSingle();
-
-      const { data: vendorData } = await supabase
-        .from('vendors')
-        .select('vendor_code')
-        .eq('id', formData.vendor)
-        .maybeSingle();
-
-      const { data: barcodeNumber } = await supabase.rpc('get_next_barcode_number');
-
-      if (!barcodeNumber) {
-        throw new Error('Failed to generate barcode number');
-      }
-
-      const mrpMarkup = cost > 0 ? ((mrp - cost) / cost) * 100 : 0;
-
-      const barcodeStructured = `${pgData?.group_code || 'XX'}-${colorData?.color_code || 'XX'}-${defaultSize?.size_code || 'XX'}-${formData.designNo}-${vendorData?.vendor_code || 'XX'}`;
-
-      const batchData = {
-        barcode_alias_8digit: barcodeNumber,
-        barcode_structured: barcodeStructured,
+      const masterData = {
         design_no: formData.designNo,
         product_group: formData.productGroup,
-        color: formData.color,
-        size: defaultSize?.id || null,
+        color: formData.color || null,
         vendor: formData.vendor,
-        cost_actual: cost,
         mrp: mrp,
-        mrp_markup_percent: mrpMarkup,
         gst_logic: formData.gstLogic,
-        total_quantity: quantity,
-        available_quantity: quantity,
         floor: formData.floor,
-        payout_code: formData.payoutCode || null,
         photos: formData.imageUrl ? [formData.imageUrl] : [],
         description: formData.description || '',
-        status: 'active',
+        barcodes_per_item: formData.barcodesPerItem,
+        payout_code: formData.payoutCode,
         created_by: userRecord?.id || null,
       };
 
       const { error: insertError } = await supabase
-        .from('barcode_batches')
-        .insert([batchData]);
+        .from('product_masters')
+        .insert([masterData]);
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        if (insertError.code === '23505') {
+          throw new Error('This design already exists for the selected vendor and color');
+        }
+        throw insertError;
+      }
 
-      setSuccess(`Inventory item created successfully! Barcode: ${barcodeNumber}`);
+      setSuccess('Product Master created successfully! You can now use this design in Purchase Invoice.');
 
       setFormData({
         productGroup: formData.productGroup,
@@ -267,6 +238,7 @@ export default function AddItem() {
         imageUrl: '',
         description: '',
         payoutCode: '',
+        barcodesPerItem: 1,
       });
     } catch (err: any) {
       console.error('Error adding item:', err);
@@ -380,15 +352,16 @@ export default function AddItem() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Payout Code
+                Barcodes per Item
               </label>
               <input
-                type="text"
-                value={formData.payoutCode}
-                onChange={(e) => setFormData({ ...formData, payoutCode: e.target.value })}
+                type="number"
+                min="1"
+                value={formData.barcodesPerItem}
+                onChange={(e) => setFormData({ ...formData, barcodesPerItem: parseInt(e.target.value) || 1 })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="Optional payout code"
               />
+              <p className="text-xs text-gray-500 mt-1">Default number of labels to print for this design</p>
             </div>
 
             <div>
@@ -419,6 +392,19 @@ export default function AddItem() {
               rows={3}
             />
             <p className="text-xs text-gray-500 mt-1">Optional: Add a detailed description for this item</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Payout Code
+            </label>
+            <input
+              type="text"
+              value={formData.payoutCode}
+              onChange={(e) => setFormData({ ...formData, payoutCode: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              placeholder="Enter Payout Code"
+            />
           </div>
 
           <div>

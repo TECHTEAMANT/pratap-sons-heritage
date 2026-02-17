@@ -178,6 +178,7 @@ export default function Reports() {
       `)
       .gte('order_date', startDate)
       .lte('order_date', endDate)
+      .neq('status', 'Pending') // Exclude pending/unsaved orders
       .order('order_date', { ascending: false });
 
     if (selectedVendor) {

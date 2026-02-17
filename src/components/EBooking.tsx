@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { scanBarcode, getAvailableBarcodes } from '../utils/barcodeScanning';
-import { Calendar, Search, X, Save, Scan, Eye, CheckCircle, XCircle, Package } from 'lucide-react';
+import { Calendar, Search, X, Save, Eye, CheckCircle, XCircle, Package } from 'lucide-react';
 
 interface Booking {
   id: string;
@@ -22,12 +22,13 @@ interface Booking {
     color: string;
     size: string;
     mrp: number;
-  };
+    discount_type?: string;
+    discount_value?: number;
+  } | null;
 }
 
 export default function EBooking() {
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
   const [floors, setFloors] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -49,11 +50,10 @@ export default function EBooking() {
 
   const [showCustomerPrompt, setShowCustomerPrompt] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState('');
-  const [scannedItemDetails, setScannedItemDetails] = useState<any>(null);
+  const [bookingItems, setBookingItems] = useState<any[]>([]);
 
   useEffect(() => {
     loadBookings();
-    loadCustomers();
     loadFloors();
   }, []);
 
@@ -92,6 +92,8 @@ export default function EBooking() {
               color: itemInfo.color_name,
               size: itemInfo.size_name,
               mrp: itemInfo.mrp,
+              discount_type: itemInfo.discount_type,
+              discount_value: itemInfo.discount_value,
             } : null,
           };
         })
@@ -102,19 +104,6 @@ export default function EBooking() {
       setError(err.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadCustomers = async () => {
-    try {
-      const { data } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('status', 'active')
-        .order('name');
-      setCustomers(data || []);
-    } catch (err) {
-      console.error('Error loading customers:', err);
     }
   };
 
@@ -181,7 +170,6 @@ export default function EBooking() {
       setFormData(prev => ({ ...prev, customer_name: newCustomerName.trim() }));
       setShowCustomerPrompt(false);
       setNewCustomerName('');
-      loadCustomers();
       setSuccess('New customer created successfully');
       setTimeout(() => setSuccess(''), 2000);
     } catch (err: any) {
@@ -191,32 +179,39 @@ export default function EBooking() {
 
   const handleScanBarcode = async (code: string) => {
     try {
+      if (bookingItems.some(item => item.barcode_8digit === code)) {
+        setError('Item already added to list');
+        setFormData({ ...formData, barcode_8digit: '' });
+        return;
+      }
+
       const itemInfo = await scanBarcode(code);
       if (!itemInfo) {
         setError('Item not found');
-        setScannedItemDetails(null);
         return;
       }
 
       if (itemInfo.available_quantity <= 0) {
         setError('Item is out of stock');
-        setScannedItemDetails(null);
         return;
       }
 
+      setBookingItems([...bookingItems, itemInfo]);
       setFormData({
         ...formData,
-        barcode_8digit: code,
+        barcode_8digit: '',
         floor: itemInfo.floor || formData.floor,
       });
-      setScannedItemDetails(itemInfo);
       setError('');
-      setSuccess('Item scanned successfully!');
+      setSuccess('Item added to list!');
       setTimeout(() => setSuccess(''), 2000);
     } catch (err: any) {
       setError(err.message);
-      setScannedItemDetails(null);
     }
+  };
+
+  const removeBookingItem = (barcode: string) => {
+    setBookingItems(bookingItems.filter(item => item.barcode_8digit !== barcode));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -224,8 +219,13 @@ export default function EBooking() {
     setError('');
     setSuccess('');
 
-    if (!formData.customer_mobile || !formData.barcode_8digit || !formData.floor) {
-      setError('Please fill all required fields');
+    if (!formData.customer_mobile) {
+      setError('Please enter customer mobile');
+      return;
+    }
+
+    if (bookingItems.length === 0) {
+      setError('Please add at least one item');
       return;
     }
 
@@ -239,39 +239,51 @@ export default function EBooking() {
         .eq('auth_user_id', userData?.user?.id)
         .maybeSingle();
 
-      const { data: bookingNumber, error: rpcError } = await supabase.rpc('generate_booking_number');
+      let successCount = 0;
+      const errors = [];
 
-      if (rpcError) {
-        throw new Error('Failed to generate booking number: ' + rpcError.message);
+      for (const item of bookingItems) {
+        try {
+          const { data: bookingNumber, error: rpcError } = await supabase.rpc('generate_booking_number');
+
+          if (rpcError) throw new Error(rpcError.message);
+          if (!bookingNumber) throw new Error('No booking number generated');
+
+          const bookingData = {
+            booking_number: bookingNumber,
+            customer_mobile: formData.customer_mobile,
+            barcode_8digit: item.barcode_8digit,
+            floor: (typeof item.floor === 'object' && item.floor !== null ? item.floor.id : item.floor) || formData.floor,
+            booking_expiry: formData.booking_expiry || null,
+            notes: formData.notes || null,
+            created_by: userRecord?.id || null,
+          };
+
+          const { error } = await supabase
+            .from('e_bookings')
+            .insert([bookingData]);
+
+          if (error) throw error;
+          successCount++;
+        } catch (err: any) {
+          console.error(`Error booking item ${item.barcode_8digit}:`, err);
+          errors.push(`Failed to book item ${item.barcode_8digit}: ${err.message}`);
+        }
       }
 
-      if (!bookingNumber) {
-        throw new Error('Booking number generation returned null');
+      if (errors.length > 0) {
+        setError(errors.join(', '));
       }
 
-      const bookingData = {
-        booking_number: bookingNumber,
-        customer_mobile: formData.customer_mobile,
-        barcode_8digit: formData.barcode_8digit,
-        floor: formData.floor,
-        booking_expiry: formData.booking_expiry || null,
-        notes: formData.notes || null,
-        created_by: userRecord?.id || null,
-      };
-
-      const { error } = await supabase
-        .from('e_bookings')
-        .insert([bookingData]);
-
-      if (error) throw error;
-
-      setSuccess(`Booking ${bookingNumber} created successfully!`);
-      setShowBookingForm(false);
-      resetForm();
-      loadBookings();
-      setTimeout(() => setSuccess(''), 3000);
+      if (successCount > 0) {
+        setSuccess(`${successCount} booking(s) created successfully!`);
+        setShowBookingForm(false);
+        resetForm();
+        loadBookings();
+        setTimeout(() => setSuccess(''), 3000);
+      }
     } catch (err: any) {
-      setError(err.message || 'Failed to create booking');
+      setError(err.message || 'Failed to create bookings');
     } finally {
       setLoading(false);
     }
@@ -306,7 +318,7 @@ export default function EBooking() {
     });
     setShowCustomerPrompt(false);
     setNewCustomerName('');
-    setScannedItemDetails(null);
+    setBookingItems([]);
   };
 
   const filteredBookings = bookings.filter(booking => {
@@ -417,9 +429,14 @@ export default function EBooking() {
                         <div className="text-xs font-semibold text-emerald-600">
                           MRP: ₹{booking.item_details.mrp}
                         </div>
+                        {booking.item_details.discount_value && booking.item_details.discount_value > 0 && (
+                          <div className="text-xs font-bold text-green-600">
+                            Final: ₹{(booking.item_details.mrp - (booking.item_details.discount_type === 'percentage' ? (booking.item_details.mrp * booking.item_details.discount_value) / 100 : booking.item_details.discount_value)).toFixed(2)}
+                          </div>
+                        )}
                       </div>
                     ) : (
-                      <span className="text-gray-400">Loading...</span>
+                      <span className="text-gray-400">Details unavailable</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm font-semibold">{booking.floor_name}</td>
@@ -538,9 +555,6 @@ export default function EBooking() {
                       value={formData.barcode_8digit}
                       onChange={(e) => {
                         setFormData({ ...formData, barcode_8digit: e.target.value });
-                        if (e.target.value !== formData.barcode_8digit) {
-                          setScannedItemDetails(null);
-                        }
                       }}
                       onKeyPress={(e) => {
                         if (e.key === 'Enter' && formData.barcode_8digit.length === 8) {
@@ -550,7 +564,6 @@ export default function EBooking() {
                       }}
                       className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Enter or scan 8-digit code"
-                      required
                     />
                     <button
                       type="button"
@@ -564,73 +577,59 @@ export default function EBooking() {
                   {!selectedFloor && <p className="text-xs text-orange-600 mt-1">Select floor first to browse items</p>}
                 </div>
 
-                {scannedItemDetails && (
-                  <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                      <Package className="w-5 h-5 mr-2 text-blue-600" />
-                      Scanned Item Details
-                    </h4>
-                    <div className="flex gap-4">
-                      {scannedItemDetails.photos && scannedItemDetails.photos.length > 0 ? (
-                        <img
-                          src={scannedItemDetails.photos[0]}
-                          alt={scannedItemDetails.design_no}
-                          className="w-32 h-32 object-cover rounded-lg border-2 border-gray-300 shadow-md"
-                          onError={(e) => {
-                            e.currentTarget.src = 'https://via.placeholder.com/128?text=No+Image';
-                          }}
-                        />
-                      ) : (
-                        <div className="w-32 h-32 bg-gray-200 rounded-lg flex items-center justify-center text-gray-400 border-2 border-gray-300">
-                          <Package className="w-12 h-12" />
-                        </div>
-                      )}
-                      <div className="flex-1 space-y-2">
-                        <div>
-                          <span className="text-sm text-gray-600">Design:</span>
-                          <span className="ml-2 font-semibold text-gray-800">{scannedItemDetails.design_no}</span>
-                        </div>
-                        <div>
-                          <span className="text-sm text-gray-600">Details:</span>
-                          <span className="ml-2 text-sm text-gray-700">
-                            {scannedItemDetails.product_group_name} • {scannedItemDetails.color_name} • {scannedItemDetails.size_name}
-                          </span>
-                        </div>
-                        <div className="flex gap-4 items-center">
-                          <div>
-                            <span className="text-sm text-gray-600">MRP:</span>
-                            <span className="ml-2 font-bold text-lg text-gray-800">₹{scannedItemDetails.mrp}</span>
-                          </div>
-                          {scannedItemDetails.discount_value && scannedItemDetails.discount_value > 0 && (
-                            <>
-                              <div>
-                                <span className="text-sm text-gray-600">Discount:</span>
-                                <span className="ml-2 font-semibold text-red-600">
-                                  {scannedItemDetails.discount_type === 'percentage'
-                                    ? `${scannedItemDetails.discount_value}%`
-                                    : `₹${scannedItemDetails.discount_value}`}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-sm text-gray-600">Final Price:</span>
-                                <span className="ml-2 font-bold text-lg text-green-600">
-                                  ₹{(scannedItemDetails.mrp - (
-                                    scannedItemDetails.discount_type === 'percentage'
-                                      ? (scannedItemDetails.mrp * scannedItemDetails.discount_value) / 100
-                                      : scannedItemDetails.discount_value
-                                  )).toFixed(2)}
-                                </span>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                        <div>
-                          <span className="text-sm text-gray-600">Available Quantity:</span>
-                          <span className="ml-2 bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-semibold text-sm">
-                            {scannedItemDetails.available_quantity}
-                          </span>
-                        </div>
-                      </div>
+                {bookingItems.length > 0 && (
+                  <div className="bg-gray-50 border-2 border-gray-200 rounded-lg overflow-hidden">
+                    <div className="bg-gray-100 px-4 py-2 border-b-2 border-gray-200 flex justify-between items-center">
+                      <h4 className="font-semibold text-gray-700 flex items-center">
+                        <Package className="w-4 h-4 mr-2" />
+                        Items to Book ({bookingItems.length})
+                      </h4>
+                    </div>
+                    <div className="max-h-60 overflow-y-auto">
+                      <table className="w-full">
+                        <thead className="bg-gray-50 sticky top-0">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
+                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
+                            <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {bookingItems.map((item, idx) => (
+                            <tr key={idx}>
+                              <td className="px-4 py-2 text-sm font-mono text-gray-600">{item.barcode_8digit}</td>
+                              <td className="px-4 py-2 text-sm">
+                                <div className="font-medium text-gray-800">{item.design_no}</div>
+                                <div className="text-xs text-gray-500">
+                                  {item.product_group_name} • {item.color_name} • {item.size_name}
+                                </div>
+                              </td>
+                              <td className="px-4 py-2 text-sm text-right font-medium">
+                                {item.discount_value && item.discount_value > 0 ? (
+                                  <div>
+                                    <span className="line-through text-gray-400 text-xs block">₹{item.mrp}</span>
+                                    <span className="text-green-600 font-bold">
+                                      ₹{(item.mrp - (item.discount_type === 'percentage' ? (item.mrp * item.discount_value) / 100 : item.discount_value)).toFixed(2)}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  `₹${item.mrp}`
+                                )}
+                              </td>
+                              <td className="px-4 py-2 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => removeBookingItem(item.barcode_8digit)}
+                                  className="text-red-500 hover:text-red-700 p-1"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 )}
@@ -677,7 +676,7 @@ export default function EBooking() {
                   className="px-6 py-2 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-lg hover:from-blue-700 hover:to-cyan-700 disabled:from-gray-400 disabled:to-gray-500 flex items-center shadow-md"
                 >
                   <Save className="w-5 h-5 mr-2" />
-                  {loading ? 'Creating...' : 'Create Booking'}
+                  {loading ? 'Creating...' : `Create Booking (${bookingItems.length})`}
                 </button>
               </div>
             </form>
@@ -762,11 +761,8 @@ export default function EBooking() {
                       <td className="px-4 py-3 text-center">
                         <button
                           onClick={() => {
-                            setFormData({ ...formData, barcode_8digit: item.barcode_8digit });
-                            setScannedItemDetails(item);
+                            handleScanBarcode(item.barcode_8digit);
                             setShowItemSelect(false);
-                            setSuccess('Item selected successfully!');
-                            setTimeout(() => setSuccess(''), 2000);
                           }}
                           className="px-4 py-1 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded hover:from-blue-700 hover:to-cyan-700 text-sm font-semibold shadow-md"
                         >
