@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Users, Plus, Edit2, Save, X, Loader, Shield, Trash2 } from 'lucide-react';
+import RoleManagement from './RoleManagement';
 
 export default function UserManagement() {
   const [users, setUsers] = useState<any[]>([]);
@@ -320,30 +321,7 @@ export default function UserManagement() {
           </div>
         )}
 
-        <div className="mt-8 bg-blue-50 p-6 rounded-lg">
-          <h3 className="text-lg font-semibold mb-4 flex items-center">
-            <Shield className="w-5 h-5 mr-2 text-blue-600" />
-            Available Roles
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {roles.map((role) => (
-              <div key={role.id} className="bg-white p-4 rounded-lg border border-gray-200">
-                <h4 className="font-semibold text-gray-800">{role.name}</h4>
-                <p className="text-sm text-gray-600 mt-1">{role.description}</p>
-                <div className="mt-3 text-xs text-gray-500 space-y-1">
-                  {role.can_view_cost && <div>• View Cost Prices</div>}
-                  {role.can_view_mrp && <div>• View MRP</div>}
-                  {role.can_manage_purchases && <div>• Manage Purchases</div>}
-                  {role.can_manage_sales && <div>• Manage Sales</div>}
-                  {role.can_view_reports && <div>• View Reports</div>}
-                  {role.can_manage_inventory && <div>• Manage Inventory</div>}
-                  {role.can_manage_masters && <div>• Manage Master Data</div>}
-                  {role.can_manage_users && <div>• Manage Users</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <RoleManagement onRolesChanged={loadData} />
       </div>
     </div>
   );

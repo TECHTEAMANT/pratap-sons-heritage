@@ -1,10 +1,14 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { calculateReverseGST, GSTType } from '../utils/gst';
 import { scanBarcode, getAvailableBarcodes, updateBarcodeQuantity } from '../utils/barcodeScanning';
 import { calculateGSTBreakdown, GSTTransactionType } from '../utils/gstBreakdown';
 import { Scan, Trash2, Save, Search, X, Eye } from 'lucide-react';
 import SalesInvoicePDF from './SalesInvoicePDF';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 
 interface BillingItem {
   barcode_8digit: string;
@@ -348,25 +352,17 @@ export default function Billing() {
     try {
       const totals = calculateTotals();
 
-      const { count } = await supabase
-        .from('sales_invoices')
-        .select('*', { count: 'exact', head: true });
-
-      const invoiceNumber = `INV${new Date().getFullYear()}${String((count || 0) + 1).padStart(6, '0')}`;
-
       const { data: userData } = await supabase.auth.getUser();
 
       const { data: userRecord } = await supabase
         .from('users')
-        .select('id')
+        .select('id, mapped_salesman')
         .eq('auth_user_id', userData?.user?.id)
         .maybeSingle();
 
       const actualAmountPaid = Math.min(parseFloat(amountPaid) || 0, totals.netPayable);
       const amountPending = totals.netPayable - actualAmountPaid;
       const paymentStatus = amountPending === 0 ? 'paid' : (actualAmountPaid > 0 ? 'partial' : 'pending');
-
-      const gstBreakdown = calculateGSTBreakdown(totals.totalGst, gstType);
 
       // 1. Prepare Invoice Data
       const invoiceData = {
@@ -455,7 +451,8 @@ export default function Billing() {
       invoiceData.igst_18 = igst_18_total;
 
       // 3. Call Transactional RPC with Fallback
-      let newInvoiceNumber, newInvoiceId;
+      let newInvoiceNumber = '';
+      let newInvoiceId: string | null = null;
 
       try {
         const { data: rpcResult, error: rpcError } = await supabase.rpc('generate_invoice_transaction', {
@@ -465,7 +462,7 @@ export default function Billing() {
 
         if (rpcError) throw rpcError;
         newInvoiceNumber = rpcResult.invoice_number;
-        newInvoiceId = rpcResult.id;
+        newInvoiceId = rpcResult.id ? String(rpcResult.id) : null;
 
       } catch (rpcErr: any) {
         // Fallback for when RPC is missing (404) or fails
@@ -492,7 +489,7 @@ export default function Billing() {
 
           if (invoiceError) throw invoiceError;
           newInvoiceNumber = fallbackInvoiceNumber;
-          newInvoiceId = invoice.id;
+          newInvoiceId = String(invoice.id);
 
           // B. Insert Items
           const fallbackItems = invoiceItems.map(item => ({
@@ -595,38 +592,35 @@ export default function Billing() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <div className="bg-white rounded-xl shadow-lg p-6">
-        <div className="flex items-center justify-between mb-6">
+      <Card className="mt-4">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div className="flex items-center">
             <Scan className="w-8 h-8 text-emerald-600 mr-3" />
-            <h2 className="text-3xl font-bold text-gray-800">Billing</h2>
+            <CardTitle>Billing</CardTitle>
           </div>
-        </div>
+        </CardHeader>
 
+        <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <Label className="mb-2 block">
               Customer Mobile <span className="text-red-500">*</span>
-            </label>
-            <input
+            </Label>
+            <Input
               type="tel"
               maxLength={10}
               value={customerMobile}
               onChange={(e) => setCustomerMobile(e.target.value.replace(/\D/g, ''))}
-              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
               placeholder="10-digit mobile"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Customer Name
-            </label>
-            <input
+            <Label className="mb-2 block">Customer Name</Label>
+            <Input
               type="text"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
-              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
               placeholder="Auto-filled or enter manually"
               readOnly={customerMobile.length === 10 && customerName !== ''}
             />
@@ -638,10 +632,10 @@ export default function Billing() {
 
         <div className="flex gap-4 mb-6">
           <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <Label className="mb-2 block">
               Scan 8-Digit Barcode <span className="text-emerald-600 text-xs">(Use 8-digit code)</span>
-            </label>
-            <input
+            </Label>
+            <Input
               ref={barcodeInputRef}
               type="text"
               value={barcodeInput}
@@ -652,26 +646,26 @@ export default function Billing() {
                   scanBarcodeCode();
                 }
               }}
-              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
               placeholder="Enter 8-digit code"
               maxLength={8}
             />
           </div>
           <div className="flex items-end gap-2">
-            <button
+            <Button
               onClick={scanBarcodeCode}
-              className="px-6 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition flex items-center shadow-md"
+              className="px-6 py-2 flex items-center gap-2 shadow-md"
             >
-              <Scan className="w-5 h-5 mr-2" />
+              <Scan className="w-5 h-5" />
               Scan
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={() => setShowManualSelect(true)}
-              className="px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition flex items-center shadow-md"
+              variant="secondary"
+              className="px-6 py-2 flex items-center gap-2 shadow-md"
             >
-              <Search className="w-5 h-5 mr-2" />
+              <Search className="w-5 h-5" />
               Select
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -685,13 +679,13 @@ export default function Billing() {
           <div className="bg-gradient-to-r from-green-50 to-green-100 border-2 border-green-300 text-green-700 p-3 rounded-lg mb-4 flex items-center justify-between">
             <span>{success}</span>
             {lastGeneratedInvoiceId && (
-              <button
+              <Button
                 onClick={() => setShowInvoicePDF(true)}
-                className="ml-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 shadow-md"
+                className="ml-4 flex items-center gap-2 shadow-md"
               >
                 <Eye className="w-4 h-4" />
                 View Invoice
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -728,25 +722,25 @@ export default function Billing() {
                     <td className="px-4 py-3 text-sm">{item.product_description}</td>
                     <td className="px-4 py-3 text-sm text-right font-semibold">₹{item.mrp.toFixed(2)}</td>
                     <td className="px-4 py-3 text-right">
-                      <input
+                      <Input
                         type="number"
                         min="0"
                         max="100"
                         step="0.1"
                         value={item.discount_percent.toFixed(1)}
                         onChange={(e) => updateDiscount(item.barcode_8digit, parseFloat(e.target.value) || 0, true)}
-                        className="w-16 px-2 py-1 text-sm border-2 border-gray-300 rounded focus:ring-2 focus:ring-emerald-500 text-right"
+                        className="w-16 px-2 py-1 text-sm text-right"
                       />
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <input
+                      <Input
                         type="number"
                         min="0"
                         max={item.mrp}
                         step="0.01"
                         value={item.discount.toFixed(2)}
                         onChange={(e) => updateDiscount(item.barcode_8digit, parseFloat(e.target.value) || 0, false)}
-                        className="w-20 px-2 py-1 text-sm border-2 border-gray-300 rounded focus:ring-2 focus:ring-emerald-500 text-right"
+                        className="w-20 px-2 py-1 text-sm text-right"
                       />
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-emerald-700 font-semibold">{reverseGst.gstPercentage}%</td>
@@ -760,12 +754,13 @@ export default function Billing() {
                       />
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <button
+                      <Button
                         onClick={() => removeItem(item.barcode_8digit)}
+                        variant="ghost"
                         className="text-red-600 hover:text-red-800 p-1"
                       >
                         <Trash2 className="w-5 h-5" />
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 );
@@ -809,24 +804,22 @@ export default function Billing() {
 
             <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Label className="mb-2 block">
                   Amount Paid <span className="text-red-500">*</span>
-                </label>
-                <input
+                </Label>
+                <Input
                   type="number"
                   min="0"
                   max={totals.netPayable}
                   step="0.01"
                   value={amountPaid}
                   onChange={(e) => setAmountPaid(e.target.value)}
-                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 text-lg font-semibold"
+                  className="w-full text-lg font-semibold"
                   placeholder="Enter amount paid"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Amount Pending
-                </label>
+                <Label className="mb-2 block">Amount Pending</Label>
                 <div className={`w-full px-4 py-2 border-2 rounded-lg text-lg font-bold ${
                   totals.netPayable - (parseFloat(amountPaid) || 0) > 0
                     ? 'bg-red-50 border-red-300 text-red-700'
@@ -839,15 +832,15 @@ export default function Billing() {
 
             {items.some(item => !item.delivered) && (
               <div className="mb-4 p-4 bg-orange-50 border-2 border-orange-200 rounded-lg">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Label className="mb-2 block">
                   Expected Delivery Date (for items not delivered immediately)
-                </label>
-                <input
+                </Label>
+                <Input
                   type="date"
                   value={expectedDeliveryDate}
                   onChange={(e) => setExpectedDeliveryDate(e.target.value)}
                   min={new Date().toISOString().split('T')[0]}
-                  className="px-4 py-2 border-2 border-orange-300 rounded-lg focus:ring-2 focus:ring-orange-500 w-64"
+                  className="w-64 border-orange-300"
                   placeholder="Select expected delivery date"
                 />
                 <p className="mt-1 text-xs text-orange-600">
@@ -877,10 +870,10 @@ export default function Billing() {
                 <option value="IGST">IGST</option>
               </select>
 
-              <button
+              <Button
                 onClick={generateInvoice}
                 disabled={loading || items.length === 0}
-                className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 text-white py-3 rounded-lg hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-400 disabled:to-gray-500 transition flex items-center justify-center shadow-lg font-bold text-lg"
+                className="flex-1 py-3 flex items-center justify-center shadow-lg font-bold text-lg"
               >
                 {loading ? (
                   'Generating Invoice...'
@@ -890,11 +883,12 @@ export default function Billing() {
                     Generate Invoice
                   </>
                 )}
-              </button>
+              </Button>
             </div>
           </div>
         )}
-      </div>
+        </CardContent>
+      </Card>
 
       {showManualSelect && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -913,12 +907,12 @@ export default function Billing() {
             </div>
 
             <div className="p-6">
-              <input
+              <Input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search by 8-digit code, design no, or product name..."
-                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 mb-4"
+                className="w-full mb-4"
                 autoFocus
               />
             </div>
@@ -970,12 +964,12 @@ export default function Billing() {
                         </td>
                         <td className="px-4 py-3 text-sm text-right font-semibold">₹{item.mrp?.toFixed(2)}</td>
                         <td className="px-4 py-3 text-center">
-                          <button
+                          <Button
                             onClick={() => addManualItem(item)}
-                            className="px-4 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded hover:from-emerald-700 hover:to-teal-700 text-sm font-semibold shadow-md"
+                            className="px-4 py-1 text-sm font-semibold shadow-md"
                           >
                             Add
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -1009,10 +1003,10 @@ export default function Billing() {
             </div>
 
             <div className="p-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <Label className="mb-2 block">
                 Customer Name <span className="text-red-500">*</span>
-              </label>
-              <input
+              </Label>
+              <Input
                 type="text"
                 value={newCustomerName}
                 onChange={(e) => setNewCustomerName(e.target.value)}
@@ -1021,31 +1015,30 @@ export default function Billing() {
                     createNewCustomer();
                   }
                 }}
-                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                 placeholder="Enter customer name"
                 autoFocus
               />
 
               <div className="flex justify-end gap-3 mt-6">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => {
                     setShowCustomerPrompt(false);
                     setNewCustomerName('');
                     setCustomerMobile('');
                     setCustomerName('');
                   }}
-                  className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  className="shadow-md"
                   onClick={createNewCustomer}
-                  className="px-6 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 shadow-md"
                 >
                   Create Customer
-                </button>
+                </Button>
               </div>
             </div>
           </div>

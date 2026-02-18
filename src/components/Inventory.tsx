@@ -459,8 +459,11 @@ export default function Inventory() {
                   <input
                     type="number"
                     step="0.01"
-                    value={editingItem.cost}
-                    onChange={(e) => setEditingItem({ ...editingItem, cost: parseFloat(e.target.value) || 0 })}
+                    value={editingItem.cost === 0 ? '' : editingItem.cost}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEditingItem({ ...editingItem, cost: val === '' ? 0 : parseFloat(val) || 0 });
+                    }}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -470,8 +473,11 @@ export default function Inventory() {
                   <input
                     type="number"
                     step="0.01"
-                    value={editingItem.mrp_markup_percent}
-                    onChange={(e) => setEditingItem({ ...editingItem, mrp_markup_percent: parseFloat(e.target.value) || 0 })}
+                    value={editingItem.mrp_markup_percent === 0 ? '' : editingItem.mrp_markup_percent}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEditingItem({ ...editingItem, mrp_markup_percent: val === '' ? 0 : parseFloat(val) || 0 });
+                    }}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -481,8 +487,11 @@ export default function Inventory() {
                   <input
                     type="number"
                     step="0.01"
-                    value={editingItem.mrp}
-                    onChange={(e) => setEditingItem({ ...editingItem, mrp: parseFloat(e.target.value) || 0 })}
+                    value={editingItem.mrp === 0 ? '' : editingItem.mrp}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEditingItem({ ...editingItem, mrp: val === '' ? 0 : parseFloat(val) || 0 });
+                    }}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
                 </div>

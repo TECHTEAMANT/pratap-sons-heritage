@@ -424,8 +424,14 @@ export default function PaymentReceipts() {
                         min="0"
                         max={selectedInvoice.amount_pending}
                         step="0.01"
-                        value={formData.amount_received}
-                        onChange={(e) => setFormData({ ...formData, amount_received: parseFloat(e.target.value) || 0 })}
+                value={formData.amount_received === 0 ? '' : formData.amount_received}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFormData({
+                    ...formData,
+                    amount_received: val === '' ? 0 : parseFloat(val) || 0,
+                  });
+                }}
                         className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       />
                     </div>

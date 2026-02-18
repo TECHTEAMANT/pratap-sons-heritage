@@ -882,8 +882,11 @@ export default function SalesOrder() {
                           <td className="p-2">
                             <input
                               type="number"
-                              value={item.quantity}
-                              onChange={(e) => handleItemChange(index, 'quantity', parseInt(e.target.value) || 0)}
+                            value={item.quantity || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              handleItemChange(index, 'quantity', val === '' ? '' : parseInt(val) || 0);
+                            }}
                               className="w-20 px-2 py-1 border rounded text-sm"
                               min="1"
                               required
@@ -892,8 +895,11 @@ export default function SalesOrder() {
                           <td className="p-2">
                             <input
                               type="number"
-                              value={item.selling_price}
-                              onChange={(e) => handleItemChange(index, 'selling_price', parseFloat(e.target.value) || 0)}
+                            value={item.selling_price || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              handleItemChange(index, 'selling_price', val === '' ? '' : parseFloat(val) || 0);
+                            }}
                               className="w-24 px-2 py-1 border rounded text-sm"
                               step="0.01"
                               required
@@ -902,8 +908,11 @@ export default function SalesOrder() {
                           <td className="p-2">
                             <input
                               type="number"
-                              value={item.discount_percentage}
-                              onChange={(e) => handleItemChange(index, 'discount_percentage', parseFloat(e.target.value) || 0)}
+                            value={item.discount_percentage || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              handleItemChange(index, 'discount_percentage', val === '' ? '' : parseFloat(val) || 0);
+                            }}
                               className="w-16 px-2 py-1 border rounded text-sm"
                               step="0.01"
                             />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Package, Loader, FileText, CheckCircle, Plus, X, Save, Trash2, UserPlus } from 'lucide-react';
+import { Package, Loader, FileText, CheckCircle, Plus, X, Save, UserPlus } from 'lucide-react';
 
 interface Vendor {
   id: string;
@@ -10,10 +10,15 @@ interface Vendor {
 
 interface OrderItem {
   design_no: string;
-  product_description: string;
-  quantity: number;
-  rate: number;
-  total: number;
+  product_group: string;
+  color: string;
+  sizes: { size: string; quantity: number }[];
+  cost_per_item: string;
+  mrp: number;
+  gst_logic: string;
+  description: string;
+  total_quantity: number;
+  total_cost: number;
 }
 
 interface PurchaseOrder {
@@ -35,12 +40,20 @@ interface PurchaseOrder {
 export default function PurchaseOrders() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [productGroups, setProductGroups] = useState<any[]>([]);
+  const [colors, setColors] = useState<any[]>([]);
+  const [sizes, setSizes] = useState<any[]>([]);
+  const [existingDesigns, setExistingDesigns] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
   const [showQuickVendor, setShowQuickVendor] = useState(false);
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [itemMode, setItemMode] = useState<'existing' | 'new'>('existing');
+  const [selectedDesignId, setSelectedDesignId] = useState('');
 
   const [quickVendor, setQuickVendor] = useState({
     name: '',
@@ -55,20 +68,36 @@ export default function PurchaseOrders() {
     notes: '',
   });
 
-  const [items, setItems] = useState<OrderItem[]>([
-    {
-      design_no: '',
-      product_description: '',
-      quantity: 1,
-      rate: 0,
-      total: 0,
-    },
-  ]);
+  const [items, setItems] = useState<OrderItem[]>([]);
+
+  const [currentItem, setCurrentItem] = useState<OrderItem>({
+    design_no: '',
+    product_group: '',
+    color: '',
+    sizes: [],
+    cost_per_item: '',
+    mrp: 0,
+    gst_logic: 'AUTO_5_18',
+    description: '',
+    total_quantity: 0,
+    total_cost: 0,
+  });
+
+  const [newItemSizes, setNewItemSizes] = useState<{ size: string; quantity: number }[]>([]);
 
   useEffect(() => {
     loadOrders();
     loadVendors();
+    loadMasterData();
   }, [filterStatus]);
+
+  useEffect(() => {
+    if (formData.vendor_id) {
+      loadExistingDesigns(formData.vendor_id);
+    } else {
+      setExistingDesigns([]);
+    }
+  }, [formData.vendor_id]);
 
   const loadOrders = async () => {
     setLoading(true);
@@ -98,7 +127,7 @@ export default function PurchaseOrders() {
       const { data, error } = await supabase
         .from('vendors')
         .select('id, name, vendor_code')
-        .eq('status', 'active')
+        .eq('active', true)
         .order('name');
 
       if (error) throw error;
@@ -107,6 +136,59 @@ export default function PurchaseOrders() {
       console.error('Error loading vendors:', err);
     }
   };
+
+  const loadMasterData = async () => {
+    try {
+      const [groupsRes, colorsRes, sizesRes] = await Promise.all([
+        supabase.from('product_groups').select('*'),
+        supabase.from('colors').select('*'),
+        supabase.from('sizes').select('*').order('sort_order'),
+      ]);
+
+      setProductGroups(groupsRes.data || []);
+      setColors(colorsRes.data || []);
+      setSizes(sizesRes.data || []);
+    } catch (err) {
+      console.error('Error loading purchase order master data:', err);
+    }
+  };
+
+  const loadExistingDesigns = async (vendorId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('product_masters')
+        .select(`
+          id,
+          design_no,
+          product_group:product_groups(id, name, group_code),
+          color:colors(id, name, color_code),
+          vendor:vendors(id, name, vendor_code),
+          description
+        `)
+        .eq('vendor', vendorId);
+
+      if (error) throw error;
+
+      const designs = (data || []).map((row: any) => ({
+        id: row.id,
+        design_no: row.design_no,
+        product_group: row.product_group,
+        color: row.color,
+        vendor: row.vendor,
+        description: row.description || '',
+      }));
+
+      setExistingDesigns(designs);
+    } catch (err) {
+      console.error('Error loading existing designs for purchase orders:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (sizes.length > 0) {
+      setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
+    }
+  }, [sizes]);
 
   const createQuickVendor = async () => {
     if (!quickVendor.name || !quickVendor.vendor_code) {
@@ -123,7 +205,7 @@ export default function PurchaseOrders() {
           vendor_code: quickVendor.vendor_code,
           contact_person: quickVendor.contact_person || null,
           mobile: quickVendor.mobile || null,
-          status: 'active',
+          active: true,
         }])
         .select()
         .single();
@@ -143,30 +225,90 @@ export default function PurchaseOrders() {
     }
   };
 
-  const handleItemChange = (index: number, field: keyof OrderItem, value: any) => {
-    const newItems = [...items];
-    newItems[index] = { ...newItems[index], [field]: value };
-    newItems[index].total = newItems[index].quantity * newItems[index].rate;
-    setItems(newItems);
-  };
-
-  const addItem = () => {
-    setItems([
-      ...items,
-      {
-        design_no: '',
-        product_description: '',
-        quantity: 1,
-        rate: 0,
-        total: 0,
-      },
-    ]);
-  };
-
   const removeItem = (index: number) => {
-    if (items.length > 1) {
-      setItems(items.filter((_, i) => i !== index));
+    setItems(items.filter((_, i) => i !== index));
+  };
+
+  const openNewItemForm = () => {
+    setCurrentItem({
+      design_no: '',
+      product_group: '',
+      color: '',
+      sizes: [],
+      cost_per_item: "0",
+      mrp: 0,
+      gst_logic: 'AUTO_5_18',
+      description: '',
+      total_quantity: 0,
+      total_cost: 0,
+    });
+    setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
+    setEditingIndex(null);
+    setShowItemForm(true);
+  };
+
+  const editItem = (index: number) => {
+    const item = items[index];
+    setCurrentItem(item);
+    if (item.sizes && item.sizes.length > 0) {
+      setNewItemSizes(item.sizes);
+    } else {
+      setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
     }
+    setEditingIndex(index);
+    setShowItemForm(true);
+    setItemMode('new');
+  };
+
+  const saveItemToList = () => {
+    const totalQuantity = newItemSizes.reduce((sum, sq) => sum + (sq.quantity || 0), 0);
+    const cost = parseFloat(currentItem.cost_per_item || '0');
+
+    if (!currentItem.design_no || !currentItem.product_group || !currentItem.description || totalQuantity <= 0 || cost <= 0) {
+      setError('Please fill design, product group, description, sizes and cost for the item');
+      return;
+    }
+
+    const item: OrderItem = {
+      ...currentItem,
+      sizes: newItemSizes,
+      total_quantity: totalQuantity,
+      total_cost: totalQuantity * cost,
+    };
+
+    if (editingIndex !== null) {
+      const updated = [...items];
+      updated[editingIndex] = item;
+      setItems(updated);
+    } else {
+      setItems([...items, item]);
+    }
+
+    setShowItemForm(false);
+    setEditingIndex(null);
+    setError('');
+  };
+
+  const buildProductDescription = (item: OrderItem) => {
+    const group = productGroups.find(pg => pg.id === item.product_group);
+    const color = colors.find(c => c.id === item.color);
+    const sizesSummary = item.sizes
+      .filter(sq => sq.quantity > 0)
+      .map(sq => {
+        const size = sizes.find((s: any) => s.id === sq.size);
+        return `${size?.name || ''}:${sq.quantity}`;
+      })
+      .filter(Boolean)
+      .join(', ');
+
+    const parts = [
+      group?.name || '',
+      color?.name || '',
+      item.description || '',
+      sizesSummary ? `Sizes ${sizesSummary}` : '',
+    ].filter(Boolean);
+
+    return parts.join(' | ') || 'Item';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -177,7 +319,12 @@ export default function PurchaseOrders() {
       return;
     }
 
-    if (items.some(item => !item.product_description || item.quantity <= 0 || item.rate <= 0)) {
+    if (items.length === 0) {
+      setError('Please add at least one item');
+      return;
+    }
+
+    if (items.some(item => !item.design_no || !item.product_group || !item.description || item.total_quantity <= 0 || parseFloat(item.cost_per_item || '0') <= 0)) {
       setError('Please fill in all item details with valid values');
       return;
     }
@@ -187,8 +334,8 @@ export default function PurchaseOrders() {
     setSuccess('');
 
     try {
-      const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
-      const totalAmount = items.reduce((sum, item) => sum + item.total, 0);
+      const totalItems = items.reduce((sum, item) => sum + item.total_quantity, 0);
+      const totalAmount = items.reduce((sum, item) => sum + item.total_cost, 0);
 
       const poNumber = await generatePONumber();
 
@@ -197,7 +344,7 @@ export default function PurchaseOrders() {
         .insert([
           {
             po_number: poNumber,
-            vendor_id: formData.vendor_id,
+            vendor: formData.vendor_id,
             order_date: formData.order_date,
             total_items: totalItems,
             total_amount: totalAmount,
@@ -213,10 +360,10 @@ export default function PurchaseOrders() {
       const itemsToInsert = items.map((item) => ({
         purchase_order_id: poData.id,
         design_no: item.design_no,
-        product_description: item.product_description,
-        quantity: item.quantity,
-        rate: item.rate,
-        total: item.total,
+        product_description: buildProductDescription(item),
+        quantity: item.total_quantity,
+        rate: parseFloat(item.cost_per_item || '0'),
+        total: item.total_cost,
       }));
 
       const { error: itemsError } = await supabase
@@ -237,14 +384,15 @@ export default function PurchaseOrders() {
   };
 
   const generatePONumber = async () => {
-    const { data, error } = await supabase.rpc('generate_po_number');
+    const { count, error } = await supabase
+      .from('purchase_orders')
+      .select('*', { count: 'exact', head: true });
+
     if (error) {
-      const { count } = await supabase
-        .from('purchase_orders')
-        .select('*', { count: 'exact', head: true });
-      return `PO${String((count || 0) + 1).padStart(6, '0')}`;
+      console.error('Error generating PO number:', error);
     }
-    return data;
+
+    return `PO${String((count || 0) + 1).padStart(6, '0')}`;
   };
 
   const resetForm = () => {
@@ -253,15 +401,9 @@ export default function PurchaseOrders() {
       order_date: new Date().toISOString().split('T')[0],
       notes: '',
     });
-    setItems([
-      {
-        design_no: '',
-        product_description: '',
-        quantity: 1,
-        rate: 0,
-        total: 0,
-      },
-    ]);
+    setItems([]);
+    setShowItemForm(false);
+    setEditingIndex(null);
     setShowForm(false);
   };
 
@@ -269,6 +411,10 @@ export default function PurchaseOrders() {
     switch (status.toLowerCase()) {
       case 'draft':
         return 'bg-gray-100 text-gray-800';
+      case 'pending':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'completed':
+        return 'bg-green-100 text-green-800';
       case 'ordered':
         return 'bg-blue-100 text-blue-800';
       case 'received':
@@ -467,7 +613,7 @@ export default function PurchaseOrders() {
                   <h4 className="text-md font-semibold text-gray-700">Order Items</h4>
                   <button
                     type="button"
-                    onClick={addItem}
+                    onClick={openNewItemForm}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center text-sm"
                   >
                     <Plus className="w-4 h-4 mr-1" />
@@ -475,85 +621,305 @@ export default function PurchaseOrders() {
                   </button>
                 </div>
 
+                {showItemForm && (
+                  <div className="mb-4 bg-white border border-gray-200 rounded-lg p-4">
+                    <div className="flex gap-4 mb-4">
+                      <label className="flex items-center px-3 py-2 border rounded-lg cursor-pointer">
+                        <input
+                          type="radio"
+                          value="existing"
+                          checked={itemMode === 'existing'}
+                          onChange={(e) => {
+                            setItemMode(e.target.value as 'existing');
+                            setSelectedDesignId('');
+                            setCurrentItem({
+                              design_no: '',
+                              product_group: '',
+                              color: '',
+                              sizes: [],
+                              cost_per_item: "0",
+                              mrp: 0,
+                              gst_logic: 'AUTO_5_18',
+                              description: '',
+                              total_quantity: 0,
+                              total_cost: 0,
+                            });
+                            setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
+                          }}
+                          className="mr-2"
+                        />
+                        <span className="text-sm font-medium text-gray-700">Existing Design</span>
+                      </label>
+                      <label className="flex items-center px-3 py-2 border rounded-lg cursor-pointer">
+                        <input
+                          type="radio"
+                          value="new"
+                          checked={itemMode === 'new'}
+                          onChange={(e) => {
+                            setItemMode(e.target.value as 'new');
+                            setSelectedDesignId('');
+                            setCurrentItem({
+                              design_no: '',
+                              product_group: '',
+                              color: '',
+                              sizes: [],
+                              cost_per_item: "0",
+                              mrp: 0,
+                              gst_logic: 'AUTO_5_18',
+                              description: '',
+                              total_quantity: 0,
+                              total_cost: 0,
+                            });
+                            setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
+                          }}
+                          className="mr-2"
+                        />
+                        <span className="text-sm font-medium text-gray-700">New Design</span>
+                      </label>
+                    </div>
+
+                    {itemMode === 'existing' && (
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Select Design *
+                        </label>
+                        <select
+                          value={selectedDesignId}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            setSelectedDesignId(id);
+                            const design = existingDesigns.find((d: any) => d.id === id);
+                            if (design) {
+                              setCurrentItem((prev) => ({
+                                ...prev,
+                                design_no: design.design_no,
+                                product_group: design.product_group?.id || '',
+                                color: design.color?.id || '',
+                                description: design.description || '',
+                              }));
+                            }
+                          }}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          disabled={!formData.vendor_id}
+                        >
+                          <option value="">Select</option>
+                          {existingDesigns.map((design: any) => (
+                            <option key={design.id} value={design.id}>
+                              {design.design_no} - {design.product_group?.name || ''} - {design.color?.name || 'No Color'}
+                            </option>
+                          ))}
+                        </select>
+                        {!formData.vendor_id && (
+                          <p className="text-xs text-orange-600 mt-1">Please select a vendor first</p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Design No *
+                        </label>
+                        <input
+                          type="text"
+                          value={currentItem.design_no}
+                          onChange={(e) => setCurrentItem({ ...currentItem, design_no: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          disabled={itemMode === 'existing'}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Product Group
+                        </label>
+                        <select
+                          value={currentItem.product_group}
+                          onChange={(e) => setCurrentItem({ ...currentItem, product_group: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          disabled={itemMode === 'existing'}
+                        >
+                          <option value="">Select</option>
+                          {productGroups.map(pg => (
+                            <option key={pg.id} value={pg.id}>{pg.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Color
+                        </label>
+                        <select
+                          value={currentItem.color}
+                          onChange={(e) => setCurrentItem({ ...currentItem, color: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          disabled={itemMode === 'existing' && !!existingDesigns.find((d: any) => d.id === selectedDesignId)?.color}
+                        >
+                          <option value="">Select</option>
+                          {colors.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Cost Per Item
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={currentItem.cost_per_item}
+                          onChange={(e) => setCurrentItem({ ...currentItem, cost_per_item: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Description *
+                        </label>
+                        <input
+                          type="text"
+                          value={currentItem.description}
+                          onChange={(e) => setCurrentItem({ ...currentItem, description: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Size Quantities
+                      </label>
+                      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+                        {newItemSizes.map((sq, idx) => {
+                          const size = sizes.find((s: any) => s.id === sq.size);
+                          return (
+                            <div key={sq.size} className="bg-gray-50 p-2 rounded border border-gray-200">
+                              <div className="text-xs font-semibold mb-1 text-center">
+                                {size?.name}
+                              </div>
+                              <input
+                                type="number"
+                                min="0"
+                                value={sq.quantity}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  const updated = [...newItemSizes];
+                                  updated[idx] = { ...updated[idx], quantity: val };
+                                  setNewItemSizes(updated);
+                                }}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-center text-sm"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowItemForm(false);
+                          setEditingIndex(null);
+                        }}
+                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveItemToList}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                      >
+                        {editingIndex !== null ? 'Update Item' : 'Add to List'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="overflow-x-auto">
                   <table className="w-full border border-gray-300">
                     <thead className="bg-gray-100">
                       <tr>
-                        <th className="p-2 text-left text-xs">Design No</th>
-                        <th className="p-2 text-left text-xs">Product Description *</th>
-                        <th className="p-2 text-left text-xs">Quantity *</th>
-                        <th className="p-2 text-left text-xs">Rate *</th>
+                        <th className="p-2 text-left text-xs">Design</th>
+                        <th className="p-2 text-left text-xs">Details</th>
+                        <th className="p-2 text-left text-xs">Total Qty</th>
+                        <th className="p-2 text-left text-xs">Rate</th>
                         <th className="p-2 text-left text-xs">Total</th>
                         <th className="p-2 text-left text-xs">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {items.map((item, index) => (
-                        <tr key={index} className="border-t">
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={item.design_no}
-                              onChange={(e) => handleItemChange(index, 'design_no', e.target.value)}
-                              className="w-full px-2 py-1 border rounded text-sm"
-                              placeholder="Optional"
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={item.product_description}
-                              onChange={(e) => handleItemChange(index, 'product_description', e.target.value)}
-                              className="w-full px-2 py-1 border rounded text-sm"
-                              required
-                              placeholder="Enter description"
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input
-                              type="number"
-                              value={item.quantity}
-                              onChange={(e) => handleItemChange(index, 'quantity', parseInt(e.target.value) || 0)}
-                              className="w-20 px-2 py-1 border rounded text-sm"
-                              min="1"
-                              required
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input
-                              type="number"
-                              value={item.rate}
-                              onChange={(e) => handleItemChange(index, 'rate', parseFloat(e.target.value) || 0)}
-                              className="w-24 px-2 py-1 border rounded text-sm"
-                              step="0.01"
-                              required
-                            />
-                          </td>
-                          <td className="p-2 text-sm font-semibold">
-                            ₹{item.total.toFixed(2)}
-                          </td>
-                          <td className="p-2">
-                            <button
-                              type="button"
-                              onClick={() => removeItem(index)}
-                              className="text-red-600 hover:text-red-800"
-                              disabled={items.length === 1}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                      {items.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-4 text-center text-sm text-gray-500">
+                            No items added. Click "Add Item" to start.
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        items.map((item, index) => {
+                          const group = productGroups.find(pg => pg.id === item.product_group);
+                          const color = colors.find(c => c.id === item.color);
+                          const sizesSummary = item.sizes
+                            .filter(sq => sq.quantity > 0)
+                            .map(sq => {
+                              const size = sizes.find((s: any) => s.id === sq.size);
+                              return `${size?.name || ''}:${sq.quantity}`;
+                            })
+                            .join(', ');
+                          return (
+                            <tr key={index} className="border-t">
+                              <td className="p-2 text-sm font-semibold">
+                                {item.design_no}
+                              </td>
+                              <td className="p-2 text-xs">
+                                <div>{group?.name}</div>
+                                <div className="text-gray-600">{color?.name}</div>
+                                {sizesSummary && (
+                                  <div className="text-gray-500 text-xs">Sizes {sizesSummary}</div>
+                                )}
+                              </td>
+                              <td className="p-2 text-sm">
+                                {item.total_quantity}
+                              </td>
+                              <td className="p-2 text-sm">
+                                ₹{parseFloat(item.cost_per_item || '0').toFixed(2)}
+                              </td>
+                              <td className="p-2 text-sm font-semibold">
+                                ₹{item.total_cost.toFixed(2)}
+                              </td>
+                              <td className="p-2">
+                                <div className="flex items-center space-x-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => editItem(index)}
+                                    className="text-blue-600 hover:text-blue-800 text-xs"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeItem(index)}
+                                    className="text-red-600 hover:text-red-800 text-xs"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
                     </tbody>
                   </table>
                 </div>
 
                 <div className="mt-4 flex justify-end space-x-4">
                   <div className="text-md font-semibold text-gray-700">
-                    Total Items: {items.reduce((sum, item) => sum + item.quantity, 0)}
+                    Total Items: {items.reduce((sum, item) => sum + item.total_quantity, 0)}
                   </div>
                   <div className="text-xl font-bold text-gray-800">
-                    Total Amount: ₹{items.reduce((sum, item) => sum + item.total, 0).toFixed(2)}
+                    Total Amount: ₹{items.reduce((sum, item) => sum + item.total_cost, 0).toFixed(2)}
                   </div>
                 </div>
               </div>
@@ -673,4 +1039,3 @@ export default function PurchaseOrders() {
     </div>
   );
 }
-

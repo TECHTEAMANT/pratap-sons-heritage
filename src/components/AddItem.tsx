@@ -357,8 +357,11 @@ export default function AddItem() {
               <input
                 type="number"
                 min="1"
-                value={formData.barcodesPerItem}
-                onChange={(e) => setFormData({ ...formData, barcodesPerItem: parseInt(e.target.value) || 1 })}
+                value={formData.barcodesPerItem || ''}
+                onChange={(e) => setFormData({
+                  ...formData,
+                  barcodesPerItem: e.target.value === '' ? ('' as any) : (parseInt(e.target.value) || 1),
+                })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               />
               <p className="text-xs text-gray-500 mt-1">Default number of labels to print for this design</p>

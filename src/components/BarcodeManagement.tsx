@@ -500,8 +500,15 @@ export default function BarcodeManagement() {
               <input
                 type="number"
                 min="1"
-                value={printQuantity}
-                onChange={(e) => setPrintQuantity(parseInt(e.target.value) || 1)}
+                value={printQuantity === 0 ? '' : printQuantity}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '') {
+                    setPrintQuantity(0);
+                  } else {
+                    setPrintQuantity(parseInt(val) || 1);
+                  }
+                }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg"
               />
             </div>

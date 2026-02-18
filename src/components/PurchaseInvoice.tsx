@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { FileText, Plus, Trash2, Save, Upload, Printer, Edit2, Eye, X } from 'lucide-react';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
 import { GSTType } from '../utils/gst';
 import { GSTTransactionType } from '../utils/gstBreakdown';
 import { encodeCostForVendor } from '../utils/costEncoding';
@@ -73,6 +77,11 @@ export default function PurchaseInvoice() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [savedPOId, setSavedPOId] = useState<string | null>(null);
+  const [sourcePOId, setSourcePOId] = useState<string | null>(null);
+
+  const [poNumberInput, setPoNumberInput] = useState('');
+  const [poLoading, setPoLoading] = useState(false);
+  const [vendorPOs, setVendorPOs] = useState<any[]>([]);
 
   const [showItemForm, setShowItemForm] = useState(false);
   const [itemMode, setItemMode] = useState<'new' | 'existing'>('existing');
@@ -113,6 +122,9 @@ export default function PurchaseInvoice() {
   useEffect(() => {
     if (selectedVendor) {
       loadExistingDesigns();
+      loadVendorPOs();
+    } else {
+      setVendorPOs([]);
     }
   }, [selectedVendor]);
 
@@ -257,6 +269,27 @@ export default function PurchaseInvoice() {
       setExistingDesigns(designs);
     } catch (err) {
       console.error('Error loading existing designs:', err);
+    }
+  };
+
+  const loadVendorPOs = async () => {
+    if (!selectedVendor) {
+      setVendorPOs([]);
+      return;
+    }
+
+    try {
+      const { data } = await supabase
+        .from('purchase_orders')
+        .select('id, po_number, order_date, status, total_items, total_amount')
+        .eq('vendor', selectedVendor)
+        .neq('status', 'Cancelled')
+        .neq('status', 'Completed')
+        .order('order_date', { ascending: false });
+
+      setVendorPOs(data || []);
+    } catch (err) {
+      console.error('Error loading vendor purchase orders:', err);
     }
   };
 
@@ -707,6 +740,7 @@ export default function PurchaseInvoice() {
                 mrp: item.mrp,
                 mrp_markup_percent: item.mrp_markup_percent,
                 gst_logic: item.gst_logic,
+            po_id: po.id,
                 modified_by: userRecord?.id || null,
                 updated_at: new Date().toISOString(),
               })
@@ -763,6 +797,82 @@ export default function PurchaseInvoice() {
         .update({ status: 'Completed' })
         .eq('id', po.id);
 
+      if (sourcePOId && sourcePOId !== po.id) {
+        const { data: basePO } = await supabase
+          .from('purchase_orders')
+          .select('id, po_number')
+          .eq('id', sourcePOId)
+          .maybeSingle();
+
+        if (basePO) {
+          const { data: poItems } = await supabase
+            .from('purchase_order_items')
+            .select('quantity, product_description')
+            .eq('purchase_order_id', sourcePOId);
+
+          let totalOrdered = 0;
+
+          (poItems || []).forEach((row: any) => {
+            let rowQty = row.quantity || 0;
+
+            if (row.product_description) {
+              const parts = String(row.product_description)
+                .split('|')
+                .map((p: string) => p.trim())
+                .filter(Boolean);
+
+              const sizesPart = parts.find((p: string) => p.startsWith('Sizes'));
+              if (sizesPart) {
+                const raw = sizesPart.replace(/^.*Sizes\s*/i, '').trim();
+                const tokens = raw.split(',');
+
+                let parsedTotal = 0;
+                tokens.forEach((token: string) => {
+                  const [namePart, qtyPart] = token.split(':');
+                  if (!namePart || !qtyPart) return;
+                  const qty = parseInt(qtyPart.trim(), 10);
+                  if (!qty || qty <= 0) return;
+                  parsedTotal += qty;
+                });
+
+                if (parsedTotal > 0) {
+                  rowQty = parsedTotal;
+                }
+              }
+            }
+
+            totalOrdered += rowQty;
+          });
+
+          const { data: receivedItems } = await supabase
+            .from('purchase_items')
+            .select('quantity')
+            .eq('order_number', basePO.po_number);
+
+          const totalReceived = (receivedItems || []).reduce(
+            (sum: number, row: any) => sum + (row.quantity || 0),
+            0
+          );
+
+          let newStatus = 'Draft';
+          if (totalOrdered > 0) {
+            if (totalReceived >= totalOrdered) {
+              newStatus = 'Completed';
+            } else if (totalReceived > 0) {
+              newStatus = 'Partial';
+            }
+          }
+
+          await supabase
+            .from('purchase_orders')
+            .update({
+              status: newStatus,
+              invoice_number: vendorInvoiceNumber || po.po_number,
+            })
+            .eq('id', sourcePOId);
+        }
+      }
+
       setSuccess(`Purchase Invoice ${poNumber} created successfully! ${totalItems} items added to inventory.`);
       setSavedPOId(po.id);
 
@@ -781,6 +891,214 @@ export default function PurchaseInvoice() {
     }
   };
 
+  const handleLoadPurchaseOrder = async () => {
+    if (!poNumberInput.trim()) {
+      return;
+    }
+
+    setPoLoading(true);
+    setError('');
+
+    try {
+      const { data: po, error: poError } = await supabase
+        .from('purchase_orders')
+        .select('id, po_number, vendor, order_date, notes, invoice_number')
+        .eq('po_number', poNumberInput.trim())
+        .maybeSingle();
+
+      if (poError) throw poError;
+
+      if (!po) {
+        setError('Purchase Order not found');
+        return;
+      }
+
+      setSourcePOId(po.id);
+
+      if (po.vendor) {
+        setSelectedVendor(po.vendor);
+      }
+      if (po.order_date) {
+        setOrderDate(po.order_date);
+      }
+      if (po.invoice_number && !vendorInvoiceNumber) {
+        setVendorInvoiceNumber(po.invoice_number);
+      }
+      if (po.notes && !notes) {
+        setNotes(po.notes);
+      }
+
+      const { data: poItems, error: itemsError } = await supabase
+        .from('purchase_order_items')
+        .select('id, design_no, product_description, quantity, rate')
+        .eq('purchase_order_id', po.id);
+
+      if (itemsError) throw itemsError;
+
+      if (!poItems || poItems.length === 0) {
+        setError('This purchase order has no items');
+        return;
+      }
+
+      const designNos = Array.from(new Set(poItems.map(i => i.design_no).filter(Boolean)));
+      let designMap: Record<string, any> = {};
+
+      if (designNos.length > 0 && po.vendor) {
+        const { data: designs, error: designsError } = await supabase
+          .from('product_masters')
+          .select(`
+            id,
+            design_no,
+            product_group:product_groups(id, name, group_code),
+            color:colors(id, name, color_code),
+            vendor:vendors(id, name, vendor_code),
+            gst_logic,
+            photos,
+            description,
+            mrp,
+            floor,
+            barcodes_per_item,
+            payout_code
+          `)
+          .eq('vendor', po.vendor)
+          .in('design_no', designNos);
+
+        if (designsError) throw designsError;
+
+        (designs || []).forEach((row: any) => {
+          designMap[row.design_no] = {
+            id: row.id,
+            design_no: row.design_no,
+            product_group: row.product_group,
+            color: row.color,
+            gst_logic: row.gst_logic,
+            photos: row.photos || [],
+            description: row.description || '',
+            mrp: row.mrp || 0,
+            floor: row.floor || '',
+            barcodes_per_item: row.barcodes_per_item || 1,
+            payout_code: row.payout_code || '',
+          };
+        });
+      }
+
+      const { data: existingReceived } = await supabase
+        .from('purchase_items')
+        .select('design_no, size, quantity')
+        .eq('order_number', po.po_number);
+
+      const receivedMap: Record<string, number> = {};
+      (existingReceived || []).forEach((row: any) => {
+        const key = `${row.design_no || ''}__${row.size || ''}`;
+        receivedMap[key] = (receivedMap[key] || 0) + (row.quantity || 0);
+      });
+
+      const invoiceItems: PurchaseItem[] = poItems.map((poItem: any) => {
+        const d = designMap[poItem.design_no] || null;
+
+        const descriptionStr = String(poItem.product_description || '');
+        const parts = descriptionStr
+          .split('|')
+          .map((p: string) => p.trim())
+          .filter(Boolean);
+
+        let fallbackProductGroupId = '';
+        if (!d && parts.length > 0 && productGroups.length > 0) {
+          const groupName = parts[0];
+          const matchedGroup = productGroups.find((pg: any) => pg.name === groupName);
+          if (matchedGroup) {
+            fallbackProductGroupId = matchedGroup.id;
+          }
+        }
+
+        let fallbackColorId = '';
+        if (colors.length > 0 && parts.length > 1) {
+          const colorName = parts[1];
+          const matchedColor = colors.find((c: any) => c.name === colorName);
+          if (matchedColor) {
+            fallbackColorId = matchedColor.id;
+          }
+        }
+
+        let sizeEntries: SizeQuantity[] = sizes.map((s: any) => ({
+          size: s.id,
+          quantity: 0,
+          print_quantity: 0,
+        }));
+
+        if (parts.length > 0) {
+          const sizesPart = parts.find((p: string) => p.startsWith('Sizes'));
+
+          if (sizesPart) {
+            const raw = sizesPart.replace(/^.*Sizes\s*/i, '').trim();
+            const tokens = raw.split(',');
+
+            tokens.forEach((token: string) => {
+              const [namePart, qtyPart] = token.split(':');
+              if (!namePart || !qtyPart) return;
+
+              const sizeName = namePart.trim();
+              const orderedQty = parseInt(qtyPart.trim(), 10);
+              if (!orderedQty || orderedQty <= 0) return;
+
+              const sizeRecord = sizes.find((s: any) => s.name === sizeName);
+              if (!sizeRecord) return;
+
+              const key = `${poItem.design_no || ''}__${sizeRecord.id}`;
+              const alreadyReceived = receivedMap[key] || 0;
+              const remaining = orderedQty - alreadyReceived;
+              if (remaining <= 0) return;
+
+              const idx = sizeEntries.findIndex(se => se.size === sizeRecord.id);
+              if (idx >= 0) {
+                sizeEntries[idx] = {
+                  size: sizeRecord.id,
+                  quantity: remaining,
+                  print_quantity: remaining,
+                };
+              }
+            });
+          }
+        }
+
+        if (!sizeEntries.some(se => se.quantity > 0)) {
+          return null;
+        }
+
+        return {
+          design_no: poItem.design_no,
+          product_group: d?.product_group?.id || fallbackProductGroupId,
+          floor_id: d?.floor || '',
+          color: d?.color?.id || fallbackColorId || '',
+          sizes: sizeEntries,
+          cost_per_item: poItem.rate,
+          mrp_markup_percent: d ? 0 : 0,
+          mrp: d?.mrp || 0,
+          gst_logic: (d?.gst_logic as GSTType) || 'AUTO_5_18',
+          image_url: d?.photos?.[0] || '',
+          description: d?.description || poItem.product_description || '',
+          order_number: po.po_number,
+          barcodes_per_item: d?.barcodes_per_item || 1,
+          payout_code: d?.payout_code || '',
+        };
+      }).filter(Boolean) as PurchaseItem[];
+
+      if (invoiceItems.length === 0) {
+        setError('All items from this purchase order are already invoiced');
+        return;
+      }
+
+      setItems(invoiceItems);
+      setSavedPOId(po.id);
+      setSuccess(`Purchase Order ${po.po_number} loaded. Items have been added to the invoice form.`);
+    } catch (err: any) {
+      console.error('Error loading purchase order for invoice:', err);
+      setError(err.message || 'Failed to load purchase order');
+    } finally {
+      setPoLoading(false);
+    }
+  };
+
   const handlePrintBarcodes = () => {
     if (savedPOId) {
       try {
@@ -793,31 +1111,33 @@ export default function PurchaseInvoice() {
 
   return (
     <div className="max-w-7xl mx-auto">
-      <div className="bg-white rounded-xl shadow-lg p-8">
-        <div className="flex items-center justify-between mb-8">
+      <Card className="mt-4">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div className="flex items-center">
             <FileText className="w-8 h-8 text-emerald-600 mr-3" />
             <div>
-              <h2 className="text-3xl font-bold text-gray-800">Purchase Invoice</h2>
-              <p className="text-sm text-gray-600">Create purchase orders and generate barcodes</p>
+              <CardTitle>Purchase Invoice</CardTitle>
+              <CardDescription>Create purchase orders and generate barcodes</CardDescription>
             </div>
           </div>
           {items.length > 0 && (
-            <button
+            <Button
               onClick={generateBarcodePreview}
-              className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 flex items-center shadow-md"
+              variant="secondary"
+              className="flex items-center gap-2"
             >
-              <Eye className="w-5 h-5 mr-2" />
+              <Eye className="w-5 h-5" />
               Preview Barcodes
-            </button>
+            </Button>
           )}
-        </div>
+        </CardHeader>
 
+        <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <Label className="mb-2 block">
               Vendor <span className="text-red-500">*</span>
-            </label>
+            </Label>
             <select
               value={selectedVendor}
               onChange={(e) => setSelectedVendor(e.target.value)}
@@ -831,66 +1151,86 @@ export default function PurchaseInvoice() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <Label className="mb-2 block">Purchase Order (optional)</Label>
+            <div className="flex gap-2">
+              <select
+                value={poNumberInput}
+                onChange={(e) => setPoNumberInput(e.target.value)}
+                className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                disabled={!selectedVendor || poLoading}
+              >
+                <option value="">
+                  {selectedVendor ? 'Select Purchase Order' : 'Select vendor first'}
+                </option>
+                {vendorPOs.map(po => (
+                  <option key={po.id} value={po.po_number}>
+                    {po.po_number} - {new Date(po.order_date).toLocaleDateString()} - {po.status}
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                onClick={handleLoadPurchaseOrder}
+                disabled={!poNumberInput.trim() || poLoading}
+                className="flex items-center"
+              >
+                {poLoading ? 'Loading...' : 'Load'}
+              </Button>
+            </div>
+          </div>
+
+          <div>
+            <Label className="mb-2 block">
               Vendor Invoice Number <span className="text-red-500">*</span>
-            </label>
-            <input
+            </Label>
+            <Input
               type="text"
               value={vendorInvoiceNumber}
               onChange={(e) => setVendorInvoiceNumber(e.target.value)}
-              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
               placeholder="INV-2024-001"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Vendor Invoice Date
-            </label>
-            <input
+            <Label className="mb-2 block">Vendor Invoice Date</Label>
+            <Input
               type="date"
               value={vendorInvoiceDate}
               onChange={(e) => setVendorInvoiceDate(e.target.value)}
-              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Order Date
-            </label>
-            <input
+            <Label className="mb-2 block">Order Date</Label>
+            <Input
               type="date"
               value={orderDate}
               onChange={(e) => setOrderDate(e.target.value)}
-              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
             />
           </div>
         </div>
 
         <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Vendor Invoice Attachment
-          </label>
+          <Label className="mb-2 block">Vendor Invoice Attachment</Label>
           <div className="flex gap-2">
-            <input
+            <Input
               type="text"
               value={invoiceFileName || (invoiceAttachment ? 'Invoice uploaded' : '')}
               readOnly
-              className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg bg-gray-50"
+              className="flex-1 bg-gray-50"
               placeholder="No invoice attached"
             />
             {invoiceAttachment && (
               <a
                 href={invoiceAttachment}
                 download={invoiceFileName || 'invoice'}
-                className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 flex items-center shadow-md"
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
               >
                 <Eye className="w-5 h-5 mr-2" />
                 View
               </a>
             )}
-            <label className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 cursor-pointer flex items-center shadow-md">
+            <label className="inline-flex items-center justify-center whitespace-nowrap rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 cursor-pointer">
               <Upload className="w-5 h-5 mr-2" />
               Upload
               <input
@@ -907,7 +1247,7 @@ export default function PurchaseInvoice() {
         <div className="border-t-2 border-gray-200 pt-6 mb-6">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-xl font-bold text-gray-800">Purchase Items</h3>
-            <button
+            <Button
               onClick={() => {
                 setShowItemForm(!showItemForm);
                 setEditingIndex(null);
@@ -926,11 +1266,11 @@ export default function PurchaseInvoice() {
                 });
                 setNewItemSizes(sizes.map(s => ({ size: s.id, quantity: 0 })));
               }}
-              className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 flex items-center shadow-md"
+              className="flex items-center gap-2 shadow-md"
             >
               <Plus className="w-5 h-5 mr-2" />
               Add Item
-            </button>
+            </Button>
           </div>
 
           {showItemForm && (
@@ -976,9 +1316,7 @@ export default function PurchaseInvoice() {
 
                 {itemMode === 'existing' && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Select Design
-                    </label>
+                    <Label className="mb-2 block">Select Design</Label>
                     <select
                       value={selectedDesignId}
                       onChange={(e) => {
@@ -1004,23 +1342,22 @@ export default function PurchaseInvoice() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Label className="mb-2 block">
                     Design Number <span className="text-red-500">*</span>
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     type="text"
                     value={currentItem.design_no}
                     onChange={(e) => setCurrentItem({ ...currentItem, design_no: e.target.value })}
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                     placeholder="DN458"
                     disabled={itemMode === 'existing'}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Label className="mb-2 block">
                     Product Group <span className="text-red-500">*</span>
-                  </label>
+                  </Label>
                   <select
                     value={currentItem.product_group}
                     onChange={(e) => setCurrentItem({ ...currentItem, product_group: e.target.value })}
@@ -1035,9 +1372,7 @@ export default function PurchaseInvoice() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Floor
-                  </label>
+                  <Label className="mb-2 block">Floor</Label>
                   <select
                     value={currentItem.floor_id}
                     onChange={(e) => setCurrentItem({ ...currentItem, floor_id: e.target.value })}
@@ -1051,23 +1386,19 @@ export default function PurchaseInvoice() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Barcodes per Item
-                  </label>
-                  <input
+                  <Label className="mb-2 block">Barcodes per Item</Label>
+                  <Input
                     type="number"
                     min="1"
-                    value={currentItem.barcodes_per_item || 1}
-                    onChange={(e) => setCurrentItem({ ...currentItem, barcodes_per_item: parseInt(e.target.value) || 1 })}
+                    value={currentItem.barcodes_per_item || ''}
+                    onChange={(e) => setCurrentItem({ ...currentItem, barcodes_per_item: e.target.value === '' ? '' as any : parseInt(e.target.value) || 1 })}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                   />
                   <p className="text-xs text-gray-500 mt-1">Number of labels to print for each item</p>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Color
-                  </label>
+                  <Label className="mb-2 block">Color</Label>
                   <select
                     value={currentItem.color}
                     onChange={(e) => setCurrentItem({ ...currentItem, color: e.target.value })}
@@ -1082,10 +1413,8 @@ export default function PurchaseInvoice() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Order Number
-                  </label>
-                  <input
+                  <Label className="mb-2 block">Order Number</Label>
+                  <Input
                     type="text"
                     value={currentItem.order_number}
                     onChange={(e) => setCurrentItem({ ...currentItem, order_number: e.target.value })}
@@ -1095,10 +1424,10 @@ export default function PurchaseInvoice() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Label className="mb-2 block">
                     Cost Per Item <span className="text-red-500">*</span>
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     type="number"
                     step="0.01"
                     value={currentItem.cost_per_item}
@@ -1108,10 +1437,10 @@ export default function PurchaseInvoice() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Label className="mb-2 block">
                     MRP Markup % <span className="text-red-500">*</span>
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     type="number"
                     step="0.01"
                     value={currentItem.mrp_markup_percent}
@@ -1123,10 +1452,8 @@ export default function PurchaseInvoice() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Calculated MRP (including GST)
-                  </label>
-                  <input
+                  <Label className="mb-2 block">Calculated MRP (including GST)</Label>
+                  <Input
                     type="number"
                     step="0.01"
                     value={currentItem.mrp}
@@ -1137,9 +1464,7 @@ export default function PurchaseInvoice() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    GST Logic
-                  </label>
+                  <Label className="mb-2 block">GST Logic</Label>
                   <select
                     value={currentItem.gst_logic}
                     onChange={(e) => setCurrentItem({ ...currentItem, gst_logic: e.target.value as GSTType })}
@@ -1152,9 +1477,7 @@ export default function PurchaseInvoice() {
               </div>
 
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Description
-                </label>
+                <Label className="mb-2 block">Description</Label>
                 <textarea
                   value={currentItem.description}
                   onChange={(e) => setCurrentItem({ ...currentItem, description: e.target.value })}
@@ -1164,19 +1487,19 @@ export default function PurchaseInvoice() {
               </div>
 
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Label className="mb-2 block">
                   Product Image <span className="text-red-500">*</span>
-                </label>
+                </Label>
                 <div className="space-y-2">
                   <div className="flex gap-2">
-                    <input
+                    <Input
                       type="text"
                       value={currentItem.image_url ? 'Image added' : ''}
                       readOnly
-                      className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg bg-gray-50"
+                      className="flex-1 bg-gray-50"
                       placeholder="No image"
                     />
-                    <label className="px-4 py-2 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-lg hover:from-gray-700 hover:to-gray-800 cursor-pointer shadow-md flex items-center">
+                    <label className="inline-flex items-center justify-center whitespace-nowrap rounded-md bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground shadow-sm transition-colors hover:bg-secondary/80 cursor-pointer">
                       <Upload className="w-5 h-5 mr-2" />
                       Upload
                       <input
@@ -1186,13 +1509,9 @@ export default function PurchaseInvoice() {
                         className="hidden"
                       />
                     </label>
-                    <button
-                      type="button"
-                      onClick={openCamera}
-                      className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-md"
-                    >
+                    <Button type="button" onClick={openCamera} className="shadow-md">
                       Take Photo
-                    </button>
+                    </Button>
                     <input
                       ref={hiddenCameraInputRef}
                       type="file"
@@ -1209,30 +1528,30 @@ export default function PurchaseInvoice() {
                         alt="Product"
                         className="w-full h-full object-cover"
                       />
-                      <button
+                      <Button
                         type="button"
                         onClick={clearImage}
                         title="Remove image"
-                        className="absolute top-1 right-1 p-1 bg-white/80 rounded-full shadow hover:bg-white"
+                        size="icon"
+                        variant="ghost"
+                        className="absolute top-1 right-1 bg-white/80 hover:bg-white"
                       >
                         <X className="w-4 h-4 text-gray-700" />
-                      </button>
+                      </Button>
                     </div>
                   )}
                 </div>
               </div>
 
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Size Quantities
-                </label>
+                <Label className="mb-2 block">Size Quantities</Label>
                 <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
                   {newItemSizes.map((sq, idx) => {
                     const size = sizes.find(s => s.id === sq.size);
                     return (
                       <div key={sq.size} className="bg-gray-50 p-2 rounded border border-gray-200">
-                        <label className="block text-xs font-bold text-gray-700 mb-1 text-center truncate" title={size?.name}>{size?.name}</label>
-                        <input
+                        <Label className="block text-xs font-bold text-gray-700 mb-1 text-center truncate" title={size?.name}>{size?.name}</Label>
+                        <Input
                           type="number"
                           min="0"
                           value={sq.quantity}
@@ -1240,12 +1559,10 @@ export default function PurchaseInvoice() {
                             const val = parseInt(e.target.value) || 0;
                             const updated = [...newItemSizes];
                             updated[idx].quantity = val;
-                            // We don't need to manually update print_quantity here as it's calculated on save
-                            // But for preview consistency, we can update it if we want
                             updated[idx].print_quantity = val * (currentItem.barcodes_per_item || 1);
                             setNewItemSizes(updated);
                           }}
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-center focus:ring-2 focus:ring-emerald-500 font-bold"
+                          className="w-full px-2 py-1 text-center font-bold"
                           placeholder="0"
                         />
                       </div>
@@ -1255,21 +1572,19 @@ export default function PurchaseInvoice() {
               </div>
 
               <div className="flex justify-end gap-2">
-                <button
+                <Button
+                  type="button"
+                  variant="outline"
                   onClick={() => {
                     setShowItemForm(false);
                     setEditingIndex(null);
                   }}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
                 >
                   Cancel
-                </button>
-                <button
-                  onClick={addItemToList}
-                  className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 shadow-md"
-                >
+                </Button>
+                <Button type="button" onClick={addItemToList} className="shadow-md">
                   {editingIndex !== null ? 'Update Item' : 'Add to List'}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -1308,15 +1623,22 @@ export default function PurchaseInvoice() {
                           <div>{productGroups.find(pg => pg.id === item.product_group)?.name}</div>
                           <div className="text-gray-600">{colors.find(c => c.id === item.color)?.name}</div>
                         </td>
-                        <td className="px-3 py-3 text-center">
-                          <div className="flex flex-wrap gap-1 justify-center">
-                            {item.sizes.map((sq, sqIdx) => (
-                              <span key={sqIdx} className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-semibold">
-                                {sizes.find(s => s.id === sq.size)?.name}: {sq.quantity}
-                              </span>
-                            ))}
+                        <td className="px-3 py-3 text-center align-top">
+                          <div className="inline-flex flex-wrap gap-1 justify-center">
+                            {item.sizes
+                              .filter(sq => sq.quantity > 0)
+                              .map((sq, sqIdx) => (
+                                <span
+                                  key={sqIdx}
+                                  className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs font-semibold border border-blue-200"
+                                >
+                                  {sizes.find(s => s.id === sq.size)?.name}: {sq.quantity}
+                                </span>
+                              ))}
                           </div>
-                          <div className="text-sm font-bold text-gray-700 mt-1">Total: {totalQty}</div>
+                          <div className="text-xs font-bold text-gray-600 mt-1">
+                            Total: <span className="text-gray-800">{totalQty}</span>
+                          </div>
                         </td>
                         <td className="px-3 py-3 text-right font-semibold">₹{item.cost_per_item.toFixed(2)}</td>
                         <td className="px-3 py-3 text-center font-semibold text-purple-700">{item.mrp_markup_percent}%</td>
@@ -1483,24 +1805,26 @@ export default function PurchaseInvoice() {
 
         <div className="flex justify-end gap-4">
           {items.length > 0 && (
-            <button
+            <Button
               onClick={generateBarcodePreview}
-              className="px-8 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 flex items-center text-lg font-semibold shadow-lg"
+              variant="secondary"
+              className="px-8 py-3 text-lg font-semibold shadow-lg flex items-center gap-2"
             >
-              <Eye className="w-5 h-5 mr-2" />
+              <Eye className="w-5 h-5" />
               Preview Barcodes
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             onClick={savePurchaseOrder}
             disabled={loading}
-            className="px-8 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-400 disabled:to-gray-500 flex items-center text-lg font-semibold shadow-lg"
+            className="px-8 py-3 text-lg font-semibold shadow-lg flex items-center gap-2"
           >
-            <Save className="w-5 h-5 mr-2" />
+            <Save className="w-5 h-5" />
             {loading ? 'Saving...' : 'Save Purchase Order'}
-          </button>
+          </Button>
         </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {cameraOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
@@ -1515,20 +1839,12 @@ export default function PurchaseInvoice() {
               />
             </div>
             <div className="mt-3 flex gap-3 justify-center">
-              <button
-                type="button"
-                onClick={capturePhoto}
-                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
-              >
+              <Button type="button" onClick={capturePhoto}>
                 Capture
-              </button>
-              <button
-                type="button"
-                onClick={closeCamera}
-                className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
-              >
+              </Button>
+              <Button type="button" variant="outline" onClick={closeCamera}>
                 Cancel
-              </button>
+              </Button>
             </div>
             {cameraError && (
               <div className="text-red-600 text-sm mt-2 text-center">
