@@ -269,8 +269,15 @@ export default function DefectiveStock() {
               <input
                 type="number"
                 min="1"
-                value={quantity}
-                onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
+                value={quantity === 0 ? '' : quantity}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '') {
+                    setQuantity(0);
+                  } else {
+                    setQuantity(parseInt(val) || 1);
+                  }
+                }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 required
               />

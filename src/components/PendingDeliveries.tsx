@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Package, Truck, CheckCircle, Printer, AlertCircle } from 'lucide-react';
 
@@ -67,28 +67,29 @@ export default function PendingDeliveries() {
             payment_status
           )
         `)
-        .or('delivered.eq.false,delivered.is.null')
         .order('expected_delivery_date', { ascending: true, nullsFirst: false });
 
       if (error) throw error;
 
-      const formattedData: PendingDeliveryItem[] = (data || []).map((item: any) => ({
-        id: item.id,
-        invoice_number: item.sales_invoice.invoice_number,
-        invoice_date: item.sales_invoice.invoice_date,
-        customer_mobile: item.sales_invoice.customer_mobile,
-        customer_name: item.sales_invoice.customer_name,
-        barcode_8digit: item.barcode_8digit,
-        design_no: item.design_no,
-        product_description: item.product_description,
-        selling_price: item.selling_price,
-        delivered: item.delivered,
-        expected_delivery_date: item.expected_delivery_date,
-        net_payable: item.sales_invoice.net_payable,
-        amount_paid: item.sales_invoice.amount_paid,
-        amount_pending: item.sales_invoice.amount_pending,
-        payment_status: item.sales_invoice.payment_status,
-      }));
+      const formattedData: PendingDeliveryItem[] = (data || [])
+        .filter((item: any) => item.delivered !== true)
+        .map((item: any) => ({
+          id: item.id,
+          invoice_number: item.sales_invoice.invoice_number,
+          invoice_date: item.sales_invoice.invoice_date,
+          customer_mobile: item.sales_invoice.customer_mobile,
+          customer_name: item.sales_invoice.customer_name,
+          barcode_8digit: item.barcode_8digit,
+          design_no: item.design_no,
+          product_description: item.product_description,
+          selling_price: item.selling_price,
+          delivered: item.delivered,
+          expected_delivery_date: item.expected_delivery_date,
+          net_payable: item.sales_invoice.net_payable,
+          amount_paid: item.sales_invoice.amount_paid,
+          amount_pending: item.sales_invoice.amount_pending,
+          payment_status: item.sales_invoice.payment_status,
+        }));
 
       console.log('Loaded pending items:', formattedData.length);
       setPendingItems(formattedData);
@@ -175,6 +176,15 @@ export default function PendingDeliveries() {
       if (error) throw error;
 
       console.log('Updated items:', data);
+
+      if (!data || data.length === 0) {
+        setError('Could not update delivery status for selected items. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      // Optimistically remove delivered items from pending list
+      setPendingItems(prev => prev.filter(item => !itemIds.includes(item.id)));
 
       setSelectedItems(new Set());
 

@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { BarChart3, Package, TrendingDown, DollarSign, Printer, FileText, Download, ShoppingCart, Users, TrendingUp, Archive, AlertTriangle, UserCheck, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { BarChart3, Package, TrendingDown, DollarSign, FileText, Download, ShoppingCart, Users, TrendingUp, Archive, AlertTriangle, UserCheck, ArrowUp, ArrowDown } from 'lucide-react';
 import SalesmanReport from './SalesmanReport';
 import SalesInvoicePDF from './SalesInvoicePDF';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 
 export default function Reports() {
   const [activeTab, setActiveTab] = useState('sales-summary');
@@ -193,9 +197,20 @@ export default function Reports() {
       return;
     }
 
-    const totalPurchase = purchaseData.reduce((sum, po) => sum + (po.total_amount || 0), 0);
-    const totalItems = purchaseData.reduce((sum, po) => sum + (po.total_items || 0), 0);
-    const totalGST = purchaseData.reduce((sum, po) => sum + (po.total_gst || 0), 0);
+    const totalPurchase = purchaseData.reduce(
+      (sum, po) => sum + (po.total_amount || 0),
+      0
+    );
+    const totalItems = purchaseData.reduce(
+      (sum, po) => sum + (po.total_items || 0),
+      0
+    );
+    const totalGST = purchaseData.reduce((sum, po) => {
+      const taxable = po.taxable_value || 0;
+      const total = po.total_amount || 0;
+      const gst = Math.max(0, total - taxable);
+      return sum + gst;
+    }, 0);
 
     setPurchaseSummary({
       totalPurchase,
@@ -532,36 +547,36 @@ export default function Reports() {
 
   return (
     <div className="p-8">
-      <div className="flex items-center mb-8">
-        <BarChart3 className="w-8 h-8 text-blue-600 mr-3" />
-        <div>
-          <h2 className="text-3xl font-bold text-gray-800">Reports & Analytics</h2>
-          <p className="text-sm text-gray-600">Comprehensive business insights and analysis</p>
-        </div>
-      </div>
+      <Card className="mb-6">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div className="flex items-center">
+            <BarChart3 className="w-8 h-8 text-blue-600 mr-3" />
+            <div>
+              <CardTitle>Reports & Analytics</CardTitle>
+            </div>
+          </div>
+        </CardHeader>
 
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
-            <input
+            <Label className="mb-2 block">Start Date</Label>
+            <Input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
-            <input
+            <Label className="mb-2 block">End Date</Label>
+            <Input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Vendor</label>
+            <Label className="mb-2 block">Vendor</Label>
             <select
               value={selectedVendor}
               onChange={(e) => setSelectedVendor(e.target.value)}
@@ -574,7 +589,7 @@ export default function Reports() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Floor</label>
+            <Label className="mb-2 block">Floor</Label>
             <select
               value={selectedFloor}
               onChange={(e) => setSelectedFloor(e.target.value)}
@@ -592,22 +607,20 @@ export default function Reports() {
           {tabs.map(tab => {
             const Icon = tab.icon;
             return (
-              <button
+              <Button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 rounded-lg flex items-center whitespace-nowrap transition-colors ${
-                  activeTab === tab.id
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
+                variant={activeTab === tab.id ? 'default' : 'outline'}
+                className="px-4 py-2 flex items-center whitespace-nowrap"
               >
                 <Icon className="w-4 h-4 mr-2" />
                 {tab.name}
-              </button>
+              </Button>
             );
           })}
         </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {loading && (
         <div className="text-center py-12">
@@ -744,13 +757,15 @@ export default function Reports() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <button
+                        <Button
+                          type="button"
+                          variant="ghost"
                           onClick={() => downloadInvoice(sale.id)}
                           className="text-blue-600 hover:text-blue-800 p-1 rounded hover:bg-blue-50"
                           title="View/Print Invoice"
                         >
                           <Download size={18} />
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -802,18 +817,24 @@ export default function Reports() {
                 <tbody className="divide-y divide-gray-200">
                   {purchaseDetails.map((po) => (
                     <tr key={po.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-semibold text-sm">{po.order_number || 'N/A'}</td>
+                      <td className="px-4 py-3 font-semibold text-sm">{po.po_number || po.order_number || 'N/A'}</td>
                       <td className="px-4 py-3 text-sm">{new Date(po.order_date).toLocaleDateString()}</td>
                       <td className="px-4 py-3 text-sm">{po.vendor?.name || 'N/A'}</td>
                       <td className="px-4 py-3 text-center">{po.total_items || 0}</td>
-                      <td className="px-4 py-3 text-right">₹{((po.total_amount || 0) - (po.total_gst || 0)).toLocaleString('en-IN')}</td>
-                      <td className="px-4 py-3 text-right">₹{(po.total_gst || 0).toLocaleString('en-IN')}</td>
-                      <td className="px-4 py-3 text-right font-bold text-green-600">₹{(po.total_amount || 0).toLocaleString('en-IN')}</td>
+                      <td className="px-4 py-3 text-right">
+                        ₹{(po.taxable_value || 0).toLocaleString('en-IN')}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        ₹{(((po.total_amount || 0) - (po.taxable_value || 0)) || 0).toLocaleString('en-IN')}
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-green-600">
+                        ₹{(po.total_amount || 0).toLocaleString('en-IN')}
+                      </td>
                       <td className="px-4 py-3 text-center">
                         {po.vendor_invoice_attachment ? (
                           <a
                             href={po.vendor_invoice_attachment}
-                            download={`invoice-${po.order_number || po.po_number}`}
+                            download={`invoice-${po.po_number || po.order_number || po.id}`}
                             className="inline-flex items-center px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs"
                           >
                             <Download className="w-4 h-4 mr-1" />
@@ -1109,7 +1130,7 @@ export default function Reports() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {pendingPayments.map((invoice, idx) => (
+                    {pendingPayments.map((invoice) => (
                       <React.Fragment key={invoice.id}>
                         <tr className="hover:bg-red-50">
                           <td className="px-4 py-3 font-semibold">{invoice.invoice_number}</td>
@@ -1236,7 +1257,8 @@ export default function Reports() {
               </div>
 
               <div className="mt-6 flex justify-end">
-                <button
+                <Button
+                  type="button"
                   onClick={() => {
                     const csvContent = [
                       ['Date', 'Barcode', 'Quantity', 'Reason', 'Notes'],
@@ -1256,11 +1278,11 @@ export default function Reports() {
                     a.download = `defective-stock-${startDate}-to-${endDate}.csv`;
                     a.click();
                   }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
+                  className="px-4 py-2 flex items-center"
                 >
                   <Download className="w-4 h-4 mr-2" />
                   Export to CSV
-                </button>
+                </Button>
               </div>
             </>
           )}

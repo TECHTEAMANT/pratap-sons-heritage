@@ -1,12 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Database, Plus, Edit2, Save, X, Loader } from 'lucide-react';
 import DiscountManagement from './DiscountManagement';
 import PayoutCodeManagement from './PayoutCodeManagement';
 import CommissionSlabManagement from './CommissionSlabManagement';
-import RoleManagement from './RoleManagement';
 
-type MasterType = 'productGroups' | 'colors' | 'sizes' | 'vendors' | 'floors' | 'cities' | 'discounts' | 'payoutCodes' | 'commissionSlabs' | 'roles';
+type MasterType = 'productGroups' | 'colors' | 'sizes' | 'vendors' | 'floors' | 'cities' | 'discounts' | 'payoutCodes' | 'commissionSlabs';
 
 export default function MasterData() {
   const [activeTab, setActiveTab] = useState<MasterType>('productGroups');
@@ -30,7 +29,6 @@ export default function MasterData() {
     { id: 'discounts', label: 'Discounts', table: 'discount_masters' },
     { id: 'payoutCodes', label: 'Payout Codes', table: 'payout_codes' },
     { id: 'commissionSlabs', label: 'Commission Slabs', table: 'commission_slabs' },
-    { id: 'roles', label: 'Roles', table: 'roles' },
   ];
 
   useEffect(() => {
@@ -308,7 +306,7 @@ export default function MasterData() {
               type="number"
               placeholder="Sort Order"
               value={formData.sort_order || ''}
-              onChange={(e) => setFormData({ ...formData, sort_order: parseInt(e.target.value) })}
+              onChange={(e) => setFormData({ ...formData, sort_order: e.target.value === '' ? null : parseInt(e.target.value) })}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
           </>
@@ -533,7 +531,7 @@ export default function MasterData() {
             <Database className="w-8 h-8 text-blue-600 mr-3" />
             <h2 className="text-3xl font-bold text-gray-800">Master Data Management</h2>
           </div>
-          {activeTab !== 'discounts' && activeTab !== 'payoutCodes' && activeTab !== 'commissionSlabs' && activeTab !== 'roles' && (
+          {activeTab !== 'discounts' && activeTab !== 'payoutCodes' && activeTab !== 'commissionSlabs' && (
             <button
               onClick={() => {
                 setShowAddForm(!showAddForm);
@@ -574,8 +572,6 @@ export default function MasterData() {
           <PayoutCodeManagement />
         ) : activeTab === 'commissionSlabs' ? (
           <CommissionSlabManagement />
-        ) : activeTab === 'roles' ? (
-          <RoleManagement />
         ) : (
           <>
 
