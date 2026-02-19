@@ -289,6 +289,39 @@ export default function PurchaseReturn() {
           }]);
 
         if (itemError) throw itemError;
+
+        if (item.condition === 'defective') {
+          const { error: defectiveError } = await supabase
+            .from('defective_stock')
+            .insert([{
+              item_id: item.item_id,
+              barcode: item.barcode_id,
+              quantity: -1,
+              reason: item.reason || 'Returned to vendor',
+              notes: `Purchase return ${returnNumber}`,
+              marked_by: userRecord?.id || null,
+            }]);
+
+          if (defectiveError) throw defectiveError;
+        }
+
+        const { data: batch, error: batchError } = await supabase
+          .from('barcode_batches')
+          .select('id, available_quantity')
+          .eq('id', item.item_id)
+          .maybeSingle();
+
+        if (batchError) throw batchError;
+
+        const currentAvailable = batch?.available_quantity ?? 0;
+        const newAvailable = currentAvailable > 0 ? currentAvailable - 1 : 0;
+
+        const { error: updateError } = await supabase
+          .from('barcode_batches')
+          .update({ available_quantity: newAvailable })
+          .eq('id', item.item_id);
+
+        if (updateError) throw updateError;
       }
 
       setSuccess(`Purchase return ${returnNumber} created successfully with ${returnItems.length} items`);

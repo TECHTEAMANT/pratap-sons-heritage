@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { FileText, Plus, Trash2, Save, Upload, Printer, Edit2, Eye, X } from 'lucide-react';
+import { FileText, Plus, Trash2, Save, Upload, Printer, Edit2, Eye, X, Package, CheckCircle, Pencil } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -91,6 +91,208 @@ export default function PurchaseInvoice() {
   const [showBarcodePreview, setShowBarcodePreview] = useState(false);
   const [barcodePreviewList, setBarcodePreviewList] = useState<BarcodePreview[]>([]);
 
+  // List View State
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [originalInvoiceQuantities, setOriginalInvoiceQuantities] = useState<Record<string, number>>({});
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<any[]>([]);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
+
+  useEffect(() => {
+    loadInvoices();
+  }, []);
+
+  const loadInvoices = async () => {
+    setLoadingInvoices(true);
+    try {
+      const { data, error } = await supabase
+        .from('purchase_orders')
+        .select('*, vendor:vendors(id, name, vendor_code)')
+        .ilike('po_number', 'PI%')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setInvoices(data || []);
+    } catch (err) {
+      console.error('Error loading invoices:', err);
+    } finally {
+      setLoadingInvoices(false);
+    }
+  };
+
+  const fetchInvoiceItems = async (poId: string) => {
+    const { data, error } = await supabase
+      .from('purchase_items')
+      .select('*, product_group:product_groups(name), color:colors(name), size:sizes(name)')
+      .eq('po_id', poId);
+    
+    if (error) {
+      console.error('Error fetching invoice items:', error);
+      return [];
+    }
+    return data || [];
+  };
+
+  const handlePreview = async (invoice: any) => {
+    setSelectedInvoice(invoice);
+    const items = await fetchInvoiceItems(invoice.id);
+    setSelectedInvoiceItems(items);
+    setIsPreviewOpen(true);
+  };
+
+  const handleEditInvoice = async (invoice: any) => {
+    setError('');
+    setSuccess('');
+    setShowForm(true);
+    setIsPreviewOpen(false);
+    setCameraOpen(false);
+    setEditingInvoiceId(invoice.id || null);
+    setSavedPOId(null);
+
+    const vendorId = invoice.vendor?.id || invoice.vendor || '';
+
+    if (vendorId) {
+      setSelectedVendor(vendorId);
+    } else {
+      setSelectedVendor('');
+    }
+
+    if (invoice.order_date) {
+      setOrderDate(invoice.order_date);
+    }
+
+    if (invoice.invoice_number) {
+      setVendorInvoiceNumber(invoice.invoice_number);
+    } else {
+      setVendorInvoiceNumber('');
+    }
+
+    if (invoice.notes) {
+      setNotes(invoice.notes);
+    } else {
+      setNotes('');
+    }
+
+    if (invoice.taxable_value !== undefined && invoice.taxable_value !== null) {
+      const taxable = typeof invoice.taxable_value === 'number'
+        ? invoice.taxable_value
+        : parseFloat(String(invoice.taxable_value)) || 0;
+      setTaxableValue(taxable > 0 ? taxable.toFixed(2) : '');
+    } else {
+      setTaxableValue('');
+    }
+
+    if (invoice.manual_gst_amount !== undefined && invoice.manual_gst_amount !== null) {
+      setManualGST(String(invoice.manual_gst_amount));
+    } else {
+      setManualGST('');
+    }
+
+    if (invoice.gst_type) {
+      setGstType(invoice.gst_type as GSTTransactionType);
+    }
+
+    setInvoiceAttachment(invoice.vendor_invoice_attachment || '');
+    setGstDifferenceReason(invoice.gst_difference_reason || '');
+
+    try {
+      const { data: dbItems, error } = await supabase
+        .from('purchase_items')
+        .select('*')
+        .eq('po_id', invoice.id);
+
+      if (error) {
+        console.error('Error loading invoice items for edit:', error);
+        setError('Failed to load invoice items for editing');
+        return;
+      }
+
+      const quantities: Record<string, number> = {};
+      const vendorForInvoice = vendorId || selectedVendor;
+
+      const grouped: Record<string, PurchaseItem> = {};
+
+      (dbItems || []).forEach((row: any) => {
+        const groupKey = [
+          row.design_no || '',
+          row.product_group || '',
+          row.color || '',
+          row.cost_per_item || 0,
+          row.mrp || 0,
+          row.mrp_markup_percent || 0,
+          row.gst_logic || '',
+          row.description || '',
+          row.order_number || '',
+        ].join('__');
+
+        let existing = grouped[groupKey];
+
+        if (!existing) {
+          const floorFromGroup = productGroups.find((g: any) => g.id === row.product_group);
+
+          existing = {
+            design_no: row.design_no,
+            product_group: row.product_group,
+            floor_id: floorFromGroup?.floor_id || '',
+            color: row.color || '',
+            sizes: [],
+            cost_per_item: row.cost_per_item,
+            mrp_markup_percent: row.mrp_markup_percent,
+            mrp: row.mrp,
+            gst_logic: row.gst_logic,
+            image_url: '',
+            description: row.description || '',
+            order_number: row.order_number || '',
+            barcodes_per_item: 1,
+            payout_code: '',
+          };
+
+          grouped[groupKey] = existing;
+        }
+
+        existing.sizes.push({
+          size: row.size,
+          quantity: row.quantity,
+          print_quantity: row.quantity,
+        });
+
+        if (vendorForInvoice) {
+          const qtyKey = [
+            vendorForInvoice || '',
+            row.design_no || '',
+            row.product_group || '',
+            row.color || '',
+            row.size || '',
+          ].join('__');
+
+          quantities[qtyKey] = (quantities[qtyKey] || 0) + (row.quantity || 0);
+        }
+      });
+
+      const groupedItems = Object.values(grouped);
+
+      if (!groupedItems.length) {
+        setItems([]);
+        setOriginalInvoiceQuantities({});
+        return;
+      }
+
+      setItems(groupedItems);
+      if (vendorForInvoice) {
+        setOriginalInvoiceQuantities(quantities);
+      } else {
+        setOriginalInvoiceQuantities({});
+      }
+    } catch (err: any) {
+      console.error('Error preparing invoice for edit:', err);
+      setError(err.message || 'Failed to prepare invoice for editing');
+    }
+  };
+
+
   const [currentItem, setCurrentItem] = useState<any>({
     design_no: '',
     product_group: '',
@@ -162,6 +364,17 @@ export default function PurchaseInvoice() {
       print_quantity: s.quantity * barcodesPerItem
     })));
   }, [currentItem.barcodes_per_item]);
+
+  const getTotalQuantity = (item: PurchaseItem | Partial<PurchaseItem>): number => {
+    return (item.sizes || []).reduce((sum, sq) => sum + sq.quantity, 0);
+  };
+
+  const calculateTotal = (): number => {
+    return items.reduce((sum, item) => {
+      const qty = getTotalQuantity(item);
+      return sum + (item.cost_per_item * qty);
+    }, 0);
+  };
 
   useEffect(() => {
     const total = calculateTotal();
@@ -309,6 +522,29 @@ export default function PurchaseInvoice() {
     return totalGST;
   };
 
+  const computeQuantitiesFromItems = (
+    vendorId: string,
+    itemsList: PurchaseItem[],
+  ): Record<string, number> => {
+    const map: Record<string, number> = {};
+
+    itemsList.forEach(item => {
+      (item.sizes || []).forEach(sq => {
+        const key = [
+          vendorId || '',
+          item.design_no || '',
+          item.product_group || '',
+          item.color || '',
+          sq.size || '',
+        ].join('__');
+
+        map[key] = (map[key] || 0) + (sq.quantity || 0);
+      });
+    });
+
+    return map;
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -394,6 +630,7 @@ export default function PurchaseInvoice() {
     }
   }, [cameraOpen]);
 
+  // Cleanup camera stream on unmount
   useEffect(() => {
     return () => {
       if (streamRef.current) {
@@ -402,6 +639,210 @@ export default function PurchaseInvoice() {
       }
     };
   }, []);
+
+  if (!showForm) {
+    return (
+      <div className="max-w-7xl mx-auto">
+        <div className="bg-white rounded-xl shadow-lg p-8">
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center">
+              <FileText className="w-8 h-8 text-emerald-600 mr-3" />
+              <h2 className="text-3xl font-bold text-gray-800">Purchase Invoices</h2>
+            </div>
+            <Button
+              onClick={() => setShowForm(true)}
+              className="px-6 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center shadow-lg"
+            >
+              <Plus className="w-5 h-5 mr-2" />
+              New Invoice
+            </Button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-100">
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">Invoice #</th>
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">Vendor</th>
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">Date</th>
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">Vendor Inv #</th>
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">Total Items</th>
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">Amount</th>
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">Status</th>
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingInvoices ? (
+                   <tr><td colSpan={8} className="p-8 text-center text-gray-500">Loading invoices...</td></tr>
+                ) : invoices.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-gray-500">
+                      No invoices found. Click "New Invoice" to create one.
+                    </td>
+                  </tr>
+                ) : (
+                  invoices.map((inv) => (
+                    <tr key={inv.id} className="border-b hover:bg-gray-50">
+                      <td className="p-4 text-sm font-semibold text-emerald-600">{inv.po_number}</td>
+                      <td className="p-4 text-sm text-gray-700">
+                        {inv.vendor?.name}
+                        <div className="text-xs text-gray-500">{inv.vendor?.vendor_code}</div>
+                      </td>
+                      <td className="p-4 text-sm text-gray-700">{new Date(inv.order_date).toLocaleDateString()}</td>
+                      <td className="p-4 text-sm text-gray-700">{inv.invoice_number}</td>
+                      <td className="p-4 text-sm text-gray-700">{inv.total_items}</td>
+                      <td className="p-4 text-sm font-semibold text-gray-700">₹{(inv.total_amount || 0).toFixed(2)}</td>
+                      <td className="p-4">
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                          inv.status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => handleEditInvoice(inv)}
+                            className="p-1 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded"
+                            title="Edit Invoice"
+                          >
+                            <Pencil className="w-5 h-5" />
+                          </button>
+                          <button
+                            onClick={() => handlePreview(inv)}
+                            className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded"
+                            title="Preview"
+                          >
+                            <Eye className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {isPreviewOpen && selectedInvoice && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b flex justify-between items-center sticky top-0 bg-white z-10">
+                <h3 className="text-xl font-bold text-gray-800">
+                  Invoice Details - {selectedInvoice.po_number}
+                </h3>
+                <button
+                  onClick={() => setIsPreviewOpen(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Vendor Details</h4>
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <p className="font-bold text-lg text-gray-800">{selectedInvoice.vendor?.name}</p>
+                      <p className="text-gray-600">Code: {selectedInvoice.vendor?.vendor_code}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Invoice Info</h4>
+                    <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Order Date:</span>
+                        <span className="font-medium">{new Date(selectedInvoice.order_date).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Vendor Inv #:</span>
+                        <span className="font-medium">{selectedInvoice.invoice_number}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Status:</span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${selectedInvoice.status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                          {selectedInvoice.status}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Total Amount:</span>
+                        <span className="font-bold text-emerald-600">₹{(selectedInvoice.total_amount || 0).toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {selectedInvoice.notes && (
+                  <div className="mb-8">
+                    <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Notes</h4>
+                    <div className="bg-yellow-50 p-4 rounded-lg text-gray-700 border border-yellow-100">
+                      {selectedInvoice.notes}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Invoice Items</h4>
+                  <div className="overflow-x-auto border rounded-lg">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 border-b">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Design</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Details</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Qty</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Cost</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">MRP</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {selectedInvoiceItems.map((item, idx) => (
+                          <tr key={idx} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 font-medium">{item.design_no}</td>
+                            <td className="px-4 py-3 text-xs">
+                              <div className="font-semibold">{item.product_group?.name}</div>
+                              <div className="text-gray-600">{item.color?.name} - {item.size?.name}</div>
+                              {item.description && <div className="text-gray-500 italic mt-0.5">{item.description}</div>}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium">{item.quantity}</td>
+                            <td className="px-4 py-3 text-right">₹{item.cost_per_item}</td>
+                            <td className="px-4 py-3 text-right">₹{item.mrp}</td>
+                            <td className="px-4 py-3 text-right font-bold text-gray-800">₹{(item.cost_per_item * item.quantity).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-gray-50 border-t">
+                        <tr>
+                          <td colSpan={2} className="px-4 py-3 text-right font-bold text-gray-700">Grand Total:</td>
+                          <td className="px-4 py-3 text-right font-bold text-gray-800">{selectedInvoiceItems.reduce((sum, item) => sum + item.quantity, 0)}</td>
+                          <td colSpan={2}></td>
+                          <td className="px-4 py-3 text-right font-bold text-emerald-600">
+                             ₹{selectedInvoiceItems.reduce((sum, item) => sum + (item.cost_per_item * item.quantity), 0).toFixed(2)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 border-t bg-gray-50 flex justify-end">
+                <button
+                  onClick={() => setIsPreviewOpen(false)}
+                  className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-medium"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const handleInvoiceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -443,16 +884,7 @@ export default function PurchaseInvoice() {
     }
   };
 
-  const getTotalQuantity = (item: PurchaseItem | Partial<PurchaseItem>): number => {
-    return (item.sizes || []).reduce((sum, sq) => sum + sq.quantity, 0);
-  };
 
-  const calculateTotal = (): number => {
-    return items.reduce((sum, item) => {
-      const qty = getTotalQuantity(item);
-      return sum + (item.cost_per_item * qty);
-    }, 0);
-  };
 
   const editItem = (index: number) => {
     const item = items[index];
@@ -891,6 +1323,292 @@ export default function PurchaseInvoice() {
     }
   };
 
+  const updatePurchaseOrder = async () => {
+    if (!editingInvoiceId) {
+      return;
+    }
+
+    if (!selectedVendor) {
+      setError('Please select a vendor');
+      return;
+    }
+
+    if (items.length === 0) {
+      setError('Please add at least one item');
+      return;
+    }
+
+    if (!vendorInvoiceNumber) {
+      setError('Please enter vendor invoice number');
+      return;
+    }
+
+    if (!taxableValue) {
+      setError('Please enter taxable value');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const { data: userRecord } = await supabase
+        .from('users')
+        .select('id')
+        .eq('auth_user_id', userData?.user?.id)
+        .maybeSingle();
+
+      const { data: currentPO, error: poFetchError } = await supabase
+        .from('purchase_orders')
+        .select('id, po_number, vendor')
+        .eq('id', editingInvoiceId)
+        .maybeSingle();
+
+      if (poFetchError) throw poFetchError;
+      if (!currentPO) {
+        throw new Error('Purchase invoice not found');
+      }
+
+      const totalAmount = calculateTotal();
+      const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
+      const finalGST = parseFloat(manualGST || '0');
+
+      const { error: poUpdateError } = await supabase
+        .from('purchase_orders')
+        .update({
+          vendor: selectedVendor,
+          order_date: orderDate,
+          invoice_number: vendorInvoiceNumber,
+          total_items: totalItems,
+          total_amount: totalAmount + finalGST,
+          status: 'Completed',
+          notes: notes,
+          taxable_value: parseFloat(taxableValue),
+          manual_gst_amount: finalGST !== calculatedGST ? finalGST : null,
+          vendor_invoice_attachment: invoiceAttachment || null,
+          gst_difference_reason: finalGST !== calculatedGST ? gstDifferenceReason : null,
+          gst_type: gstType,
+          modified_by: userRecord?.id || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', editingInvoiceId);
+
+      if (poUpdateError) throw poUpdateError;
+
+      let originalMap = originalInvoiceQuantities;
+      const originalVendorId = currentPO.vendor || selectedVendor;
+
+      if (!originalMap || Object.keys(originalMap).length === 0) {
+        const { data: existingItems, error: itemsError } = await supabase
+          .from('purchase_items')
+          .select('design_no, product_group, color, size, quantity')
+          .eq('po_id', editingInvoiceId);
+
+        if (itemsError) throw itemsError;
+
+        const map: Record<string, number> = {};
+
+        (existingItems || []).forEach(row => {
+          const key = [
+            originalVendorId || '',
+            row.design_no || '',
+            row.product_group || '',
+            row.color || '',
+            row.size || '',
+          ].join('__');
+
+          map[key] = (map[key] || 0) + (row.quantity || 0);
+        });
+
+        originalMap = map;
+      }
+
+      const newMap = computeQuantitiesFromItems(selectedVendor, items);
+      const allKeys = new Set([...Object.keys(originalMap), ...Object.keys(newMap)]);
+
+      for (const key of allKeys) {
+        const parts = key.split('__');
+        const vendorId = parts[0];
+        const designNo = parts[1];
+        const productGroupId = parts[2];
+        const colorId = parts[3] || '';
+        const sizeId = parts[4];
+
+        const oldQty = originalMap[key] || 0;
+        const newQty = newMap[key] || 0;
+        const delta = newQty - oldQty;
+
+        if (!delta) continue;
+
+        let query = supabase
+          .from('barcode_batches')
+          .select('id, total_quantity, available_quantity, floor, photos, payout_code')
+          .eq('design_no', designNo)
+          .eq('product_group', productGroupId)
+          .eq('size', sizeId)
+          .eq('vendor', vendorId)
+          .eq('status', 'active');
+
+        if (colorId) {
+          query = query.eq('color', colorId);
+        } else {
+          query = query.is('color', null);
+        }
+
+        const { data: existingBatch, error: batchError } = await query
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (batchError) throw batchError;
+
+        const itemForCombo = items.find(it => {
+          if (it.design_no !== designNo) return false;
+          if (it.product_group !== productGroupId) return false;
+          if ((it.color || '') !== (colorId || '')) return false;
+          return (it.sizes || []).some(sq => sq.size === sizeId);
+        });
+
+        if (existingBatch) {
+          const updatedTotal = Math.max(0, (existingBatch.total_quantity || 0) + delta);
+          const updatedAvailable = Math.max(0, (existingBatch.available_quantity || 0) + delta);
+
+          const updatePayload: any = {
+            total_quantity: updatedTotal,
+            available_quantity: updatedAvailable,
+            updated_at: new Date().toISOString(),
+            modified_by: userRecord?.id || null,
+          };
+
+          if (itemForCombo) {
+            updatePayload.cost_actual = itemForCombo.cost_per_item;
+            updatePayload.mrp = itemForCombo.mrp;
+            updatePayload.mrp_markup_percent = itemForCombo.mrp_markup_percent;
+            updatePayload.gst_logic = itemForCombo.gst_logic;
+            updatePayload.floor =
+              (itemForCombo.floor_id && itemForCombo.floor_id !== '')
+                ? itemForCombo.floor_id
+                : existingBatch.floor || null;
+            updatePayload.po_id = editingInvoiceId;
+            updatePayload.description = itemForCombo.description;
+            updatePayload.order_number = itemForCombo.order_number || null;
+            updatePayload.photos = itemForCombo.image_url
+              ? [itemForCombo.image_url]
+              : existingBatch.photos || [];
+            updatePayload.payout_code = itemForCombo.payout_code || existingBatch.payout_code || null;
+          }
+
+          const { error: updateBatchError } = await supabase
+            .from('barcode_batches')
+            .update(updatePayload)
+            .eq('id', existingBatch.id);
+
+          if (updateBatchError) throw updateBatchError;
+        } else if (delta > 0 && itemForCombo) {
+          const productGroup = productGroups.find(pg => pg.id === itemForCombo.product_group);
+          const color = colors.find(c => c.id === itemForCombo.color);
+          const vendorRow = vendors.find(v => v.id === vendorId);
+
+          const { data: barcodeNumber } = await supabase.rpc('get_next_barcode_number');
+          const barcodeString = String(barcodeNumber).padStart(8, '0');
+
+          const groupCode = productGroup?.group_code || 'PG';
+          const colorCode = color?.color_code || '';
+          const designPart = colorCode ? `${designNo}${colorCode}` : designNo;
+          const encodedPrice = encodeCostForVendor(itemForCombo.mrp, 'CRAZY WOMEN');
+          const structuredParts = [
+            groupCode,
+            designPart,
+            vendorRow?.vendor_code || 'VND',
+            encodedPrice,
+            barcodeString,
+          ].filter(Boolean);
+          const structuredBarcode = structuredParts.join('-');
+
+          const floorId =
+            (itemForCombo.floor_id && itemForCombo.floor_id !== '')
+              ? itemForCombo.floor_id
+              : productGroup?.floor_id || null;
+
+          const qtyForSize =
+            (itemForCombo.sizes || []).find(sq => sq.size === sizeId)?.print_quantity ?? delta;
+
+          const { error: insertBatchError } = await supabase
+            .from('barcode_batches')
+            .insert([{
+              barcode_alias_8digit: barcodeString,
+              barcode_structured: structuredBarcode,
+              design_no: designNo,
+              product_group: productGroupId,
+              size: sizeId,
+              color: colorId && colorId !== '' ? colorId : null,
+              vendor: vendorId,
+              cost_actual: itemForCombo.cost_per_item,
+              mrp: itemForCombo.mrp,
+              mrp_markup_percent: itemForCombo.mrp_markup_percent,
+              gst_logic: itemForCombo.gst_logic,
+              total_quantity: delta,
+              available_quantity: delta,
+              floor: floorId,
+              print_quantity: qtyForSize,
+              status: 'active',
+              po_id: editingInvoiceId,
+              photos: itemForCombo.image_url ? [itemForCombo.image_url] : [],
+              description: itemForCombo.description,
+              order_number: itemForCombo.order_number || null,
+              created_by: userRecord?.id || null,
+              payout_code: itemForCombo.payout_code || null,
+            }]);
+
+          if (insertBatchError) throw insertBatchError;
+        }
+      }
+
+      await supabase
+        .from('purchase_items')
+        .delete()
+        .eq('po_id', editingInvoiceId);
+
+      for (const item of items) {
+        for (const sizeQty of item.sizes) {
+          if (sizeQty.quantity <= 0) continue;
+
+          const { error: itemError } = await supabase
+            .from('purchase_items')
+            .insert([{
+              po_id: editingInvoiceId,
+              design_no: item.design_no,
+              product_group: item.product_group,
+              color: item.color && item.color !== "" ? item.color : null,
+              size: sizeQty.size,
+              quantity: sizeQty.quantity,
+              cost_per_item: item.cost_per_item,
+              mrp: item.mrp,
+              mrp_markup_percent: item.mrp_markup_percent,
+              gst_logic: item.gst_logic,
+              description: item.description,
+              order_number: item.order_number || null,
+            }]);
+
+          if (itemError) throw itemError;
+        }
+      }
+
+      setSuccess(`Purchase Invoice ${currentPO.po_number} updated successfully and inventory adjusted.`);
+      setSavedPOId(editingInvoiceId);
+      setEditingInvoiceId(null);
+      setOriginalInvoiceQuantities({});
+      setShowForm(false);
+      await loadInvoices();
+    } catch (err: any) {
+      console.error('Error updating purchase invoice:', err);
+      setError(err.message || 'Failed to update purchase invoice');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLoadPurchaseOrder = async () => {
     if (!poNumberInput.trim()) {
       return;
@@ -898,6 +1616,7 @@ export default function PurchaseInvoice() {
 
     setPoLoading(true);
     setError('');
+    setSuccess('');
 
     try {
       const { data: po, error: poError } = await supabase
@@ -1089,8 +1808,6 @@ export default function PurchaseInvoice() {
       }
 
       setItems(invoiceItems);
-      setSavedPOId(po.id);
-      setSuccess(`Purchase Order ${po.po_number} loaded. Items have been added to the invoice form.`);
     } catch (err: any) {
       console.error('Error loading purchase order for invoice:', err);
       setError(err.message || 'Failed to load purchase order');
@@ -1120,16 +1837,32 @@ export default function PurchaseInvoice() {
               <CardDescription>Create purchase orders and generate barcodes</CardDescription>
             </div>
           </div>
-          {items.length > 0 && (
+          <div className="flex gap-2">
             <Button
-              onClick={generateBarcodePreview}
-              variant="secondary"
+              onClick={() => {
+                setShowForm(false);
+                setEditingInvoiceId(null);
+                setOriginalInvoiceQuantities({});
+                setSavedPOId(null);
+                loadInvoices();
+              }}
+              variant="outline"
               className="flex items-center gap-2"
             >
-              <Eye className="w-5 h-5" />
-              Preview Barcodes
+              <X className="w-4 h-4" />
+              Cancel
             </Button>
-          )}
+            {items.length > 0 && (
+              <Button
+                onClick={generateBarcodePreview}
+                variant="secondary"
+                className="flex items-center gap-2"
+              >
+                <Eye className="w-5 h-5" />
+                Preview Barcodes
+              </Button>
+            )}
+          </div>
         </CardHeader>
 
         <CardContent>
@@ -1815,12 +2548,16 @@ export default function PurchaseInvoice() {
             </Button>
           )}
           <Button
-            onClick={savePurchaseOrder}
+            onClick={() => (editingInvoiceId ? updatePurchaseOrder() : savePurchaseOrder())}
             disabled={loading}
             className="px-8 py-3 text-lg font-semibold shadow-lg flex items-center gap-2"
           >
             <Save className="w-5 h-5" />
-            {loading ? 'Saving...' : 'Save Purchase Order'}
+            {loading
+              ? 'Saving...'
+              : editingInvoiceId
+                ? 'Update Purchase Order'
+                : 'Save Purchase Order'}
           </Button>
         </div>
         </CardContent>

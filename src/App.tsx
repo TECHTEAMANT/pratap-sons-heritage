@@ -69,6 +69,12 @@ function AppContent() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+    setCurrentPage('dashboard');
+    window.location.hash = '#dashboard';
+  }, [user?.id]);
+
   if (authLoading || permissionsLoading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">

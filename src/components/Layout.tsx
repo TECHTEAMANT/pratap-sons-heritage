@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
+import logo from '../utils/A NT Logo2.png';
 import {
   LayoutDashboard,
   Package,
@@ -31,10 +32,11 @@ interface LayoutProps {
 
 export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
   const { user, signOut } = useAuth();
-  const { permissions } = usePermissions();
+  const { permissions, roleName } = usePermissions();
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const displayName = user?.name || user?.email || '';
+  const displayName = user?.name || user?.mobile || user?.email || '';
   const userInitial = displayName ? displayName[0]?.toUpperCase() : '';
+  const roleLabel = roleName || user?.role || '';
 
   const allNavigation = [
     { name: 'Dashboard', icon: LayoutDashboard, page: 'dashboard', requiresPermission: null },
@@ -71,14 +73,16 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
         }`}
       >
         <div className="h-full flex flex-col">
-          <div className="p-6 border-b border-gray-200 bg-white/80 backdrop-blur">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white text-lg font-bold">
-                R
-              </div>
-              <div>
-                <h1 className="text-xl font-bold tracking-tight text-blue-700">Retail ERP</h1>
-                <p className="text-xs font-medium text-gray-500 mt-1">{user?.role}</p>
+          <div className="py-2 px-4 border-b border-gray-200 bg-white/80 backdrop-blur">
+            <div className="flex flex-col items-center">
+              {/* <img
+                src={logo}
+                alt="accountsNtax logo"
+                className="h-28 w-auto object-contain"
+              /> */}
+              <div className="text-center">
+                <h1 className="-mt-10 text-xl font-bold tracking-tight text-blue-700">INVENTO ERP</h1>
+                <p className="text-xs font-medium text-gray-500">{roleLabel}</p>
               </div>
             </div>
           </div>
@@ -118,7 +122,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
               </div>
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-gray-800">{displayName}</p>
-                <p className="truncate text-xs text-gray-500">{user?.email}</p>
+                <p className="truncate text-xs text-gray-500">{user?.mobile || user?.email}</p>
               </div>
             </div>
             <button

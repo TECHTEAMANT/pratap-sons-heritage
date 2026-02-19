@@ -13,7 +13,7 @@ export default function UserManagement() {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
-    email: '',
+    mobile: '',
     password: '',
     name: '',
     role_id: '',
@@ -45,7 +45,7 @@ export default function UserManagement() {
   };
 
   const handleAddUser = async () => {
-    if (!formData.email || !formData.password || !formData.name || !formData.role_id) {
+    if (!formData.mobile || !formData.password || !formData.name || !formData.role_id) {
       setError('Please fill in all fields');
       return;
     }
@@ -55,8 +55,9 @@ export default function UserManagement() {
     setSuccess('');
 
     try {
+      const loginEmail = `${formData.mobile}@login.local`;
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: formData.email,
+        email: loginEmail,
         password: formData.password,
         options: {
           data: {
@@ -72,7 +73,8 @@ export default function UserManagement() {
           .from('users')
           .insert([{
             auth_user_id: authData.user.id,
-            email: formData.email,
+            email: loginEmail,
+            mobile: formData.mobile,
             name: formData.name,
             role_id: formData.role_id,
             active: true,
@@ -82,7 +84,7 @@ export default function UserManagement() {
       }
 
       setSuccess('User created successfully!');
-      setFormData({ email: '', password: '', name: '', role_id: '' });
+      setFormData({ mobile: '', password: '', name: '', role_id: '' });
       setShowAddForm(false);
       loadData();
     } catch (err: any) {
@@ -138,7 +140,7 @@ export default function UserManagement() {
 
       if (error) throw error;
 
-      await loadData();
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
       setSuccess('User deactivated successfully!');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
@@ -159,7 +161,7 @@ export default function UserManagement() {
           <button
             onClick={() => {
               setShowAddForm(!showAddForm);
-              setFormData({ email: '', password: '', name: '', role_id: '' });
+              setFormData({ mobile: '', password: '', name: '', role_id: '' });
             }}
             className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
           >
@@ -185,10 +187,10 @@ export default function UserManagement() {
             <h3 className="text-lg font-semibold mb-4">Add New User</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <input
-                type="email"
-                placeholder="Email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                type="tel"
+                placeholder="Mobile Number"
+                value={formData.mobile}
+                onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               />
               <input
@@ -249,7 +251,7 @@ export default function UserManagement() {
             <table className="w-full">
               <thead>
                 <tr className="bg-gray-100">
-                  <th className="p-4 text-left text-sm font-semibold text-gray-700">EMAIL</th>
+                  <th className="p-4 text-left text-sm font-semibold text-gray-700">MOBILE</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">FULL NAME</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">ROLE</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">ACTIONS</th>
@@ -265,7 +267,7 @@ export default function UserManagement() {
                 ) : (
                   users.map((user) => (
                     <tr key={user.id} className="border-b hover:bg-gray-50">
-                      <td className="p-4 text-sm text-gray-700">{user.email}</td>
+                      <td className="p-4 text-sm text-gray-700">{user.mobile || user.email}</td>
                       <td className="p-4 text-sm text-gray-700">{user.name}</td>
                       <td className="p-4 text-sm text-gray-700">
                         {editingId === user.id ? (

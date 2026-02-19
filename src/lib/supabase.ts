@@ -14,6 +14,7 @@ export type UserRole = 'Admin' | 'Owner' | 'Team_Leader' | 'Executor';
 export interface User {
   id: string;
   email: string;
+  mobile?: string;
   name?: string;
   role: UserRole;
   role_id?: string;
