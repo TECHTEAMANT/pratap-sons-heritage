@@ -85,7 +85,7 @@ export default function BarcodePreviewCard({ barcode }: BarcodePreviewCardProps)
         </div>
 
         <div
-          className="text-center text-xs font-mono font-medium my-2 text-gray-700"
+          className="text-center text-xs font-mono font-bold my-2 text-gray-700"
           style={{ fontFamily: "'Courier New', monospace", letterSpacing: '0.5px' }}
         >
           {barcode.barcode_id}

@@ -9,6 +9,7 @@ import { GSTType } from '../utils/gst';
 import { GSTTransactionType } from '../utils/gstBreakdown';
 import { encodeCostForVendor } from '../utils/costEncoding';
 import { generateBarcodeDataURL } from '../utils/barcodeGenerator';
+import VendorAddModal from './VendorAddModal';
 
 interface SizeQuantity {
   size: string;
@@ -32,6 +33,7 @@ interface PurchaseItem {
   order_number: string;
   barcodes_per_item: number;
   payout_code?: string;
+  hsn_code: string;
 }
 
 interface BarcodePreview {
@@ -46,6 +48,7 @@ interface BarcodePreview {
   cost: number;
   mrp: number;
   order_number: string;
+  hsn_code: string;
 }
 
 export default function PurchaseInvoice() {
@@ -90,6 +93,7 @@ export default function PurchaseInvoice() {
 
   const [showBarcodePreview, setShowBarcodePreview] = useState(false);
   const [barcodePreviewList, setBarcodePreviewList] = useState<BarcodePreview[]>([]);
+  const [showVendorModal, setShowVendorModal] = useState(false);
 
   // List View State
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -100,6 +104,17 @@ export default function PurchaseInvoice() {
   const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<any[]>([]);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+
+  const handlePrintBarcodes = () => {
+    const poId = savedPOId || selectedInvoice?.id;
+    if (poId) {
+      try {
+        sessionStorage.setItem('returnTo', '#purchase-invoice');
+      } catch {}
+      const printUrl = `${window.location.origin}${window.location.pathname}#barcode-print?po_id=${poId}&auto=1`;
+      window.location.assign(printUrl);
+    }
+  };
 
   useEffect(() => {
     loadInvoices();
@@ -226,6 +241,7 @@ export default function PurchaseInvoice() {
           row.gst_logic || '',
           row.description || '',
           row.order_number || '',
+          row.hsn_code || '',
         ].join('__');
 
         let existing = grouped[groupKey];
@@ -248,6 +264,7 @@ export default function PurchaseInvoice() {
             order_number: row.order_number || '',
             barcodes_per_item: 1,
             payout_code: '',
+            hsn_code: row.hsn_code || '',
           };
 
           grouped[groupKey] = existing;
@@ -307,15 +324,18 @@ export default function PurchaseInvoice() {
     image_url: '',
     description: '',
     order_number: '',
+    hsn_code: '',
   });
 
   const [newItemSizes, setNewItemSizes] = useState<SizeQuantity[]>([]);
   const [, setUploadingImage] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraTarget, setCameraTarget] = useState<'item' | 'invoice'>('item');
   const [cameraError, setCameraError] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const hiddenCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const hiddenInvoiceCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     loadMasterData();
@@ -401,23 +421,46 @@ export default function PurchaseInvoice() {
     }
   }, [taxableValue, items.length]);
 
-  useEffect(() => {
-    const cost = parseFloat(currentItem.cost_per_item) || 0;
-    const markup = parseFloat(currentItem.mrp_markup_percent) || 0;
-
-    if (cost && markup !== undefined) {
-      const basePrice = cost * (1 + markup / 100);
-
-      let gstMultiplier = 1.05;
-      if (currentItem.gst_logic === 'AUTO_5_18') {
-        const estimatedMRP = basePrice * 1.05;
-        gstMultiplier = estimatedMRP < 2500 ? 1.05 : 1.18;
+  const handleItemFieldChange = (field: string, value: any) => {
+    setCurrentItem((prev: any) => {
+      const updated = { ...prev, [field]: value };
+      
+      // Calculate MRP or Markup depending on what changed
+      if (field === 'cost_per_item' || field === 'mrp_markup_percent' || field === 'gst_logic') {
+        const cost = parseFloat(updated.cost_per_item) || 0;
+        const markup = parseFloat(updated.mrp_markup_percent) || 0;
+        
+        if (cost) {
+          const basePrice = cost * (1 + markup / 100);
+          let gstMultiplier = 1.05;
+          if (updated.gst_logic === 'AUTO_5_18') {
+            const estimatedMRP = basePrice * 1.05;
+            gstMultiplier = estimatedMRP < 2500 ? 1.05 : 1.18;
+          }
+          updated.mrp = (basePrice * gstMultiplier).toFixed(2);
+        }
+      } else if (field === 'mrp') {
+        const cost = parseFloat(updated.cost_per_item) || 0;
+        const mrp = parseFloat(updated.mrp) || 0;
+        
+        if (cost && mrp) {
+          let gstMultiplier = 1.05;
+          if (updated.gst_logic === 'AUTO_5_18') {
+            // MRP is GST-inclusive. Use 5% if MRP < 2500, else 18%
+            gstMultiplier = mrp < 2500 ? 1.05 : 1.18;
+          } else if (updated.gst_logic === 'FLAT_5') {
+            gstMultiplier = 1.05;
+          }
+          
+          const basePrice = mrp / gstMultiplier;
+          const markup = ((basePrice / cost) - 1) * 100;
+          updated.mrp_markup_percent = markup.toFixed(2);
+        }
       }
-
-      const calculatedMRP = basePrice * gstMultiplier;
-      setCurrentItem({ ...currentItem, mrp: calculatedMRP.toFixed(2) });
-    }
-  }, [currentItem.cost_per_item, currentItem.mrp_markup_percent, currentItem.gst_logic]);
+      
+      return updated;
+    });
+  };
 
   const loadMasterData = async () => {
     try {
@@ -574,11 +617,16 @@ export default function PurchaseInvoice() {
     }
   };
 
-  const openCamera = async () => {
+  const openCamera = async (target: 'item' | 'invoice' = 'item') => {
     setCameraError('');
+    setCameraTarget(target);
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      hiddenCameraInputRef.current?.click();
+      if (target === 'item') {
+        hiddenCameraInputRef.current?.click();
+      } else {
+        hiddenInvoiceCameraInputRef.current?.click();
+      }
       return;
     }
 
@@ -591,7 +639,11 @@ export default function PurchaseInvoice() {
       setCameraOpen(true);
     } catch (err) {
       console.error('Error accessing camera:', err);
-      hiddenCameraInputRef.current?.click();
+      if (target === 'item') {
+        hiddenCameraInputRef.current?.click();
+      } else {
+        hiddenInvoiceCameraInputRef.current?.click();
+      }
     }
   };
 
@@ -614,7 +666,12 @@ export default function PurchaseInvoice() {
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      setCurrentItem((prev: any) => ({ ...prev, image_url: dataUrl }));
+      if (cameraTarget === 'item') {
+        setCurrentItem((prev: any) => ({ ...prev, image_url: dataUrl }));
+      } else {
+        setInvoiceAttachment(dataUrl);
+        setInvoiceFileName('Capture_' + new Date().getTime() + '.jpg');
+      }
     }
     closeCamera();
   };
@@ -835,7 +892,14 @@ export default function PurchaseInvoice() {
                 </div>
               </div>
 
-              <div className="p-6 border-t bg-gray-50 flex justify-end">
+              <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
+                <Button
+                  onClick={handlePrintBarcodes}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2"
+                >
+                  <Printer className="w-5 h-5" />
+                  Print Barcodes
+                </Button>
                 <button
                   onClick={() => setIsPreviewOpen(false)}
                   className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-medium"
@@ -1016,7 +1080,7 @@ export default function PurchaseInvoice() {
           previewCounter++;
 
           const colorCode = color?.color_code || '';
-          const designPart = colorCode ? `${item.design_no}${colorCode}` : item.design_no;
+          const designPart = colorCode ? `${item.design_no}-${colorCode}` : item.design_no;
           const encodedPrice = encodeCostForVendor(item.cost_per_item, 'CRAZY WOMEN');
           const parts = [
             groupCode,
@@ -1039,6 +1103,7 @@ export default function PurchaseInvoice() {
             cost: item.cost_per_item,
             mrp: item.mrp,
             order_number: item.order_number || '',
+            hsn_code: item.hsn_code || '',
           });
         }
       }
@@ -1139,6 +1204,7 @@ export default function PurchaseInvoice() {
               gst_logic: item.gst_logic,
               description: item.description,
               order_number: item.order_number || null,
+              hsn_code: item.hsn_code,
             }]);
 
           if (itemError) throw itemError;
@@ -1179,7 +1245,8 @@ export default function PurchaseInvoice() {
                 mrp: item.mrp,
                 mrp_markup_percent: item.mrp_markup_percent,
                 gst_logic: item.gst_logic,
-            po_id: po.id,
+                po_id: po.id,
+                hsn_code: item.hsn_code,
                 modified_by: userRecord?.id || null,
                 updated_at: new Date().toISOString(),
               })
@@ -1190,7 +1257,7 @@ export default function PurchaseInvoice() {
 
             const groupCode = productGroup?.group_code || 'PG';
             const colorCode = color?.color_code || '';
-            const designPart = colorCode ? `${item.design_no}${colorCode}` : item.design_no;
+            const designPart = colorCode ? `${item.design_no}-${colorCode}` : item.design_no;
             const encodedPrice = encodeCostForVendor(item.mrp, 'CRAZY WOMEN');
             const parts = [
               groupCode,
@@ -1226,6 +1293,7 @@ export default function PurchaseInvoice() {
                 order_number: item.order_number || null,
                 created_by: userRecord?.id || null,
                 payout_code: item.payout_code || null,
+                hsn_code: item.hsn_code,
               }]);
           }
         }
@@ -1566,6 +1634,7 @@ export default function PurchaseInvoice() {
               order_number: itemForCombo.order_number || null,
               created_by: userRecord?.id || null,
               payout_code: itemForCombo.payout_code || null,
+              hsn_code: itemForCombo.hsn_code,
             }]);
 
           if (insertBatchError) throw insertBatchError;
@@ -1596,6 +1665,7 @@ export default function PurchaseInvoice() {
               gst_logic: item.gst_logic,
               description: item.description,
               order_number: item.order_number || null,
+              hsn_code: item.hsn_code,
             }]);
 
           if (itemError) throw itemError;
@@ -1604,9 +1674,9 @@ export default function PurchaseInvoice() {
 
       setSuccess(`Purchase Invoice ${currentPO.po_number} updated successfully and inventory adjusted.`);
       setSavedPOId(editingInvoiceId);
-      setEditingInvoiceId(null);
+      setEditingInvoiceId(editingInvoiceId); // Keep editing mode active but with success message
       setOriginalInvoiceQuantities({});
-      setShowForm(false);
+      // setShowForm(false) // Removed to stay on form
       await loadInvoices();
     } catch (err: any) {
       console.error('Error updating purchase invoice:', err);
@@ -1823,15 +1893,6 @@ export default function PurchaseInvoice() {
     }
   };
 
-  const handlePrintBarcodes = () => {
-    if (savedPOId) {
-      try {
-        sessionStorage.setItem('returnTo', '#purchase-invoice');
-      } catch {}
-      const printUrl = `${window.location.origin}${window.location.pathname}#barcode-print?po_id=${savedPOId}&auto=1`;
-      window.location.assign(printUrl);
-    }
-  };
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -1878,16 +1939,36 @@ export default function PurchaseInvoice() {
             <Label className="mb-2 block">
               Vendor <span className="text-red-500">*</span>
             </Label>
-            <select
-              value={selectedVendor}
-              onChange={(e) => setSelectedVendor(e.target.value)}
-              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-            >
-              <option value="">Select Vendor</option>
-              {vendors.map(v => (
-                <option key={v.id} value={v.id}>{v.name} ({v.vendor_code})</option>
-              ))}
-            </select>
+              <select
+                value={selectedVendor}
+                onChange={(e) => {
+                  if (e.target.value === 'ADD_NEW') {
+                    setShowVendorModal(true);
+                  } else {
+                    setSelectedVendor(e.target.value);
+                  }
+                }}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                required
+              >
+                <option value="">Select Vendor</option>
+                <option value="ADD_NEW" className="font-bold text-blue-600">+ Add New Vendor...</option>
+                {vendors.map((vendor) => (
+                  <option key={vendor.id} value={vendor.id}>
+                    {vendor.name} ({vendor.vendor_code})
+                  </option>
+                ))}
+              </select>
+
+              <VendorAddModal
+                isOpen={showVendorModal}
+                onClose={() => setShowVendorModal(false)}
+                onSuccess={(newVendor) => {
+                  setVendors(prev => [...prev, newVendor].sort((a, b) => a.name.localeCompare(b.name)));
+                  setSelectedVendor(newVendor.id);
+                  setShowVendorModal(false);
+                }}
+              />
           </div>
 
           <div>
@@ -1981,6 +2062,24 @@ export default function PurchaseInvoice() {
                 disabled={uploadingInvoice}
               />
             </label>
+            <Button
+              type="button"
+              onClick={() => openCamera('invoice')}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center shadow-md"
+              disabled={uploadingInvoice}
+            >
+              <Upload className="w-5 h-5 mr-2" />
+              Take Photo
+            </Button>
+            <input
+              ref={hiddenInvoiceCameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleInvoiceUpload}
+              className="hidden"
+              disabled={uploadingInvoice}
+            />
           </div>
         </div>
 
@@ -2088,7 +2187,7 @@ export default function PurchaseInvoice() {
                   <Input
                     type="text"
                     value={currentItem.design_no}
-                    onChange={(e) => setCurrentItem({ ...currentItem, design_no: e.target.value })}
+                    onChange={(e) => handleItemFieldChange('design_no', e.target.value)}
                     placeholder="DN458"
                     disabled={itemMode === 'existing'}
                   />
@@ -2100,7 +2199,7 @@ export default function PurchaseInvoice() {
                   </Label>
                   <select
                     value={currentItem.product_group}
-                    onChange={(e) => setCurrentItem({ ...currentItem, product_group: e.target.value })}
+                    onChange={(e) => handleItemFieldChange('product_group', e.target.value)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                     disabled={itemMode === 'existing'}
                   >
@@ -2116,8 +2215,8 @@ export default function PurchaseInvoice() {
                   <Input
                     type="text"
                     value={currentItem.hsn_code || ''}
-                    readOnly
-                    className="bg-gray-50 text-gray-600"
+                    onChange={(e) => handleItemFieldChange('hsn_code', e.target.value)}
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                     placeholder="Auto-filled"
                   />
                 </div>
@@ -2126,7 +2225,7 @@ export default function PurchaseInvoice() {
                   <Label className="mb-2 block">Floor</Label>
                   <select
                     value={currentItem.floor_id}
-                    onChange={(e) => setCurrentItem({ ...currentItem, floor_id: e.target.value })}
+                    onChange={(e) => handleItemFieldChange('floor_id', e.target.value)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                   >
                     <option value="">Default Floor</option>
@@ -2142,7 +2241,7 @@ export default function PurchaseInvoice() {
                     type="number"
                     min="1"
                     value={currentItem.barcodes_per_item || ''}
-                    onChange={(e) => setCurrentItem({ ...currentItem, barcodes_per_item: e.target.value === '' ? '' as any : parseInt(e.target.value) || 1 })}
+                    onChange={(e) => handleItemFieldChange('barcodes_per_item', e.target.value === '' ? '' : parseInt(e.target.value) || 1)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                   />
                   <p className="text-xs text-gray-500 mt-1">Number of labels to print for each item</p>
@@ -2152,7 +2251,7 @@ export default function PurchaseInvoice() {
                   <Label className="mb-2 block">Color</Label>
                   <select
                     value={currentItem.color}
-                    onChange={(e) => setCurrentItem({ ...currentItem, color: e.target.value })}
+                    onChange={(e) => handleItemFieldChange('color', e.target.value)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                     disabled={itemMode === 'existing' && !!existingDesigns.find(d => d.id === selectedDesignId)?.color}
                   >
@@ -2168,7 +2267,7 @@ export default function PurchaseInvoice() {
                   <Input
                     type="text"
                     value={currentItem.order_number}
-                    onChange={(e) => setCurrentItem({ ...currentItem, order_number: e.target.value })}
+                    onChange={(e) => handleItemFieldChange('order_number', e.target.value)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                     placeholder="Optional"
                   />
@@ -2182,7 +2281,7 @@ export default function PurchaseInvoice() {
                     type="number"
                     step="0.01"
                     value={currentItem.cost_per_item}
-                    onChange={(e) => setCurrentItem({ ...currentItem, cost_per_item: e.target.value })}
+                    onChange={(e) => handleItemFieldChange('cost_per_item', e.target.value)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
@@ -2195,7 +2294,7 @@ export default function PurchaseInvoice() {
                     type="number"
                     step="0.01"
                     value={currentItem.mrp_markup_percent}
-                    onChange={(e) => setCurrentItem({ ...currentItem, mrp_markup_percent: e.target.value })}
+                    onChange={(e) => handleItemFieldChange('mrp_markup_percent', e.target.value)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                     placeholder="100"
                   />
@@ -2208,7 +2307,7 @@ export default function PurchaseInvoice() {
                     type="number"
                     step="0.01"
                     value={currentItem.mrp}
-                    onChange={(e) => setCurrentItem({ ...currentItem, mrp: e.target.value })}
+                    onChange={(e) => handleItemFieldChange('mrp', e.target.value)}
                     className="w-full px-4 py-2 border-2 border-emerald-300 rounded-lg bg-emerald-50 focus:ring-2 focus:ring-emerald-500"
                   />
                   <p className="text-xs text-emerald-600 mt-1">Auto: Cost × (1+Markup%) × (1+GST%)</p>
@@ -2218,7 +2317,7 @@ export default function PurchaseInvoice() {
                   <Label className="mb-2 block">GST Logic</Label>
                   <select
                     value={currentItem.gst_logic}
-                    onChange={(e) => setCurrentItem({ ...currentItem, gst_logic: e.target.value as GSTType })}
+                    onChange={(e) => handleItemFieldChange('gst_logic', e.target.value as GSTType)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                   >
                     <option value="AUTO_5_18">AUTO (5% if &lt;2500, else 18%)</option>
@@ -2231,7 +2330,7 @@ export default function PurchaseInvoice() {
                 <Label className="mb-2 block">Description</Label>
                 <textarea
                   value={currentItem.description}
-                  onChange={(e) => setCurrentItem({ ...currentItem, description: e.target.value })}
+                  onChange={(e) => handleItemFieldChange('description', e.target.value)}
                   className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                   rows={2}
                 />
@@ -2260,7 +2359,7 @@ export default function PurchaseInvoice() {
                         className="hidden"
                       />
                     </label>
-                    <Button type="button" onClick={openCamera} className="shadow-md">
+                    <Button type="button" onClick={() => openCamera('item')} className="shadow-md">
                       Take Photo
                     </Button>
                     <input

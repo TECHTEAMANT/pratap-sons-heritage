@@ -145,6 +145,21 @@ export default function MasterData() {
     setFormData({ ...formData, city_id: cityId, vendor_code: vendorCode });
   };
 
+  const cleanSupabasePayload = (payload: any) => {
+    const cleaned = { ...payload };
+    // Strip non-primitive fields (objects and arrays) that cause "column not found" errors
+    Object.keys(cleaned).forEach(key => {
+      if (cleaned[key] !== null && (typeof cleaned[key] === 'object' || Array.isArray(cleaned[key]))) {
+        delete cleaned[key];
+      }
+    });
+    // Strip metadata fields
+    delete cleaned.id;
+    delete cleaned.created_at;
+    delete cleaned.updated_at;
+    return cleaned;
+  };
+
   const handleAdd = async () => {
     setError('');
     setSuccess('');
@@ -166,14 +181,13 @@ export default function MasterData() {
         }
       }
 
-      // Strip joined objects from formData
-      const { cities, floors, ...cleanData } = formData;
+      const payload = cleanSupabasePayload(formData);
 
-      const { error } = await supabase
+      const { error: err } = await supabase
         .from(currentTab.table)
-        .insert([cleanData]);
+        .insert([payload]);
 
-      if (error) throw error;
+      if (err) throw err;
 
       setSuccess('Added successfully!');
       setFormData({});
@@ -195,9 +209,6 @@ export default function MasterData() {
       const currentTab = tabs.find(t => t.id === activeTab);
       if (!currentTab) return;
 
-      // Strip joined objects from formData
-      const { cities, floors, ...cleanData } = formData;
-
       if (currentTab.id === 'cities' && formData.city_code) {
         const { data: existing } = await supabase
           .from('cities')
@@ -211,12 +222,14 @@ export default function MasterData() {
         }
       }
 
-      const { error } = await supabase
+      const payload = cleanSupabasePayload(formData);
+
+      const { error: err } = await supabase
         .from(currentTab.table)
-        .update(cleanData)
+        .update(payload)
         .eq('id', id);
 
-      if (error) throw error;
+      if (err) throw err;
 
       setSuccess('Updated successfully!');
       setEditingId(null);
@@ -529,14 +542,14 @@ export default function MasterData() {
                 {typeof item[key] === 'boolean' ? (item[key] ? 'Yes' : 'No') : item[key]}
               </td>
             ))}
-            {activeTab === 'vendors' && item.cities && (
+            {activeTab === 'vendors' && (
               <td className="p-4 text-sm text-gray-700">
-                {item.cities.name} ({item.cities.city_code})
+                {item.cities ? `${item.cities.name} (${item.cities.city_code})` : '-'}
               </td>
             )}
-            {activeTab === 'productGroups' && item.floors && (
+            {activeTab === 'productGroups' && (
               <td className="p-4 text-sm text-gray-700">
-                {item.floors.name} ({item.floors.floor_code})
+                {item.floors ? `${item.floors.name} (${item.floors.floor_code})` : '-'}
               </td>
             )}
             <td className="p-4">

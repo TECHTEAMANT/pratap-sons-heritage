@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Barcode as BarcodeIcon, Save, Loader, Upload, X } from 'lucide-react';
+import VendorAddModal from './VendorAddModal';
 
 export default function AddItem() {
   const [loading, setLoading] = useState(false);
@@ -29,6 +30,7 @@ export default function AddItem() {
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [showVendorModal, setShowVendorModal] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -337,17 +339,37 @@ export default function AddItem() {
               </label>
               <select
                 value={formData.vendor}
-                onChange={(e) => setFormData({ ...formData, vendor: e.target.value })}
+                onChange={(e) => {
+                  if (e.target.value === 'ADD_NEW') {
+                    setShowVendorModal(true);
+                  } else {
+                    setFormData({ ...formData, vendor: e.target.value });
+                  }
+                }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 required
               >
                 <option value="">Select Vendor</option>
+                <option value="ADD_NEW" className="font-bold text-blue-600">+ Add New Vendor...</option>
                 {masters.vendors.map((vendor) => (
                   <option key={vendor.id} value={vendor.id}>
                     {vendor.name} ({vendor.vendor_code})
                   </option>
                 ))}
               </select>
+
+              <VendorAddModal
+                isOpen={showVendorModal}
+                onClose={() => setShowVendorModal(false)}
+                onSuccess={(newVendor) => {
+                  setMasters(prev => ({
+                    ...prev,
+                    vendors: [...prev.vendors, newVendor].sort((a, b) => a.name.localeCompare(b.name))
+                  }));
+                  setFormData(prev => ({ ...prev, vendor: newVendor.id }));
+                  setShowVendorModal(false);
+                }}
+              />
             </div>
 
             <div>
@@ -436,11 +458,11 @@ export default function AddItem() {
             <input
               type="text"
               value={formData.hsnCode}
-              readOnly
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+              onChange={(e) => setFormData({ ...formData, hsnCode: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               placeholder="Auto-filled from Product Group"
             />
-            <p className="text-xs text-gray-500 mt-1">Populated automatically when product group is selected</p>
+            <p className="text-xs text-gray-500 mt-1">Populated from product group, but can be manually changed if needed</p>
           </div>
 
           <div>

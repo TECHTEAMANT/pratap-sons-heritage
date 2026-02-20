@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Package, Loader, FileText, CheckCircle, Plus, X, Save, UserPlus, Eye, Pencil } from 'lucide-react';
+import { Package, Loader, FileText, CheckCircle, Plus, X, Save, Eye, Pencil, Trash2, Edit2 } from 'lucide-react';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import VendorAddModal from './VendorAddModal';
 
 interface Vendor {
   id: string;
@@ -49,30 +53,22 @@ export default function PurchaseOrders() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [showVendorModal, setShowVendorModal] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [showQuickVendor, setShowQuickVendor] = useState(false);
-  const [showItemForm, setShowItemForm] = useState(false);
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [itemMode, setItemMode] = useState<'existing' | 'new'>('existing');
   const [selectedDesignId, setSelectedDesignId] = useState('');
-  
-  const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
-  const [selectedOrderItems, setSelectedOrderItems] = useState<any[]>([]);
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
-
-  const [quickVendor, setQuickVendor] = useState({
-    name: '',
-    vendor_code: '',
-    contact_person: '',
-    mobile: '',
-  });
-
   const [formData, setFormData] = useState({
     vendor_id: '',
     order_date: new Date().toISOString().split('T')[0],
     notes: '',
   });
+
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [itemMode, setItemMode] = useState<'existing' | 'new'>('existing');
+  const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
+  const [selectedOrderItems, setSelectedOrderItems] = useState<any[]>([]);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
 
   const [items, setItems] = useState<OrderItem[]>([]);
 
@@ -212,40 +208,6 @@ export default function PurchaseOrders() {
     }
   }, [sizes]);
 
-  const createQuickVendor = async () => {
-    if (!quickVendor.name || !quickVendor.vendor_code) {
-      setError('Vendor name and code are required');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('vendors')
-        .insert([{
-          name: quickVendor.name,
-          vendor_code: quickVendor.vendor_code,
-          contact_person: quickVendor.contact_person || null,
-          mobile: quickVendor.mobile || null,
-          active: true,
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      setSuccess('Vendor created successfully!');
-      setShowQuickVendor(false);
-      setQuickVendor({ name: '', vendor_code: '', contact_person: '', mobile: '' });
-      await loadVendors();
-      setFormData({ ...formData, vendor_id: data.id });
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const removeItem = (index: number) => {
     setItems(items.filter((_, i) => i !== index));
@@ -610,13 +572,14 @@ export default function PurchaseOrders() {
               <option value="Received">Received</option>
               <option value="Cancelled">Cancelled</option>
             </select>
-            <button
+            <Button
               onClick={() => setShowForm(!showForm)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
+              size="lg"
+              className="flex items-center gap-2"
             >
-              {showForm ? <X className="w-5 h-5 mr-2" /> : <Plus className="w-5 h-5 mr-2" />}
+              {showForm ? <X className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
               {showForm ? 'Cancel' : 'New PO'}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -632,82 +595,6 @@ export default function PurchaseOrders() {
           </div>
         )}
 
-        {showQuickVendor && (
-          <div className="bg-green-50 p-6 rounded-lg mb-6">
-            <h3 className="text-lg font-semibold mb-4">Quick Add Vendor</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Vendor Name *
-                </label>
-                <input
-                  type="text"
-                  value={quickVendor.name}
-                  onChange={(e) => setQuickVendor({ ...quickVendor, name: e.target.value })}
-                  placeholder="Enter vendor name"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Vendor Code *
-                </label>
-                <input
-                  type="text"
-                  value={quickVendor.vendor_code}
-                  onChange={(e) => setQuickVendor({ ...quickVendor, vendor_code: e.target.value.toUpperCase() })}
-                  placeholder="e.g., VEND001"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Contact Person (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={quickVendor.contact_person}
-                  onChange={(e) => setQuickVendor({ ...quickVendor, contact_person: e.target.value })}
-                  placeholder="Enter contact person"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Mobile (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={quickVendor.mobile}
-                  onChange={(e) => setQuickVendor({ ...quickVendor, mobile: e.target.value })}
-                  placeholder="10-digit mobile"
-                  maxLength={10}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-            </div>
-            <div className="flex justify-end space-x-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowQuickVendor(false);
-                  setQuickVendor({ name: '', vendor_code: '', contact_person: '', mobile: '' });
-                }}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={createQuickVendor}
-                disabled={loading}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400"
-              >
-                {loading ? 'Creating...' : 'Create Vendor'}
-              </button>
-            </div>
-          </div>
-        )}
 
         {showForm && (
           <div className="bg-gray-50 p-6 rounded-lg mb-6">
@@ -715,77 +602,92 @@ export default function PurchaseOrders() {
             <form onSubmit={handleSubmit}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Vendor *
-                  </label>
-                  <div className="flex space-x-2">
-                    <select
-                      value={formData.vendor_id}
-                      onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
-                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      required
-                    >
-                      <option value="">Select Vendor</option>
-                      {vendors.map((vendor) => (
-                        <option key={vendor.id} value={vendor.id}>
-                          {vendor.name} ({vendor.vendor_code})
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => setShowQuickVendor(true)}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center"
-                      title="Quick Add Vendor"
-                    >
-                      <UserPlus className="w-5 h-5" />
-                    </button>
-                  </div>
+                  <Label className="mb-2 block">Vendor *</Label>
+                  <select
+                    value={formData.vendor_id}
+                    onChange={(e) => {
+                      if (e.target.value === 'ADD_NEW') {
+                        setShowVendorModal(true);
+                      } else {
+                        setFormData({ ...formData, vendor_id: e.target.value });
+                      }
+                    }}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="">Select Vendor</option>
+                    <option value="ADD_NEW" className="font-bold text-blue-600">+ Add New Vendor...</option>
+                    {vendors.map((vendor) => (
+                      <option key={vendor.id} value={vendor.id}>
+                        {vendor.name} ({vendor.vendor_code})
+                      </option>
+                    ))}
+                  </select>
+
+                  <VendorAddModal
+                    isOpen={showVendorModal}
+                    onClose={() => setShowVendorModal(false)}
+                    onSuccess={(newVendor) => {
+                      setVendors(prev => [...prev, newVendor].sort((a, b: any) => a.name.localeCompare(b.name)));
+                      setFormData(prev => ({ ...prev, vendor_id: newVendor.id }));
+                      setShowVendorModal(false);
+                    }}
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Order Date *
-                  </label>
-                  <input
+                  <Label className="mb-2 block">Order Date *</Label>
+                  <Input
                     type="date"
                     value={formData.order_date}
                     onChange={(e) => setFormData({ ...formData, order_date: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
               </div>
 
               <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Notes
-                </label>
+                <Label className="mb-2 block">Notes</Label>
                 <textarea
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   placeholder="Enter any notes or special instructions"
                   rows={3}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-h-[100px]"
                 />
               </div>
 
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="text-md font-semibold text-gray-700">Order Items</h4>
-                  <button
+                  <Button
                     type="button"
                     onClick={openNewItemForm}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center text-sm"
+                    className="flex items-center gap-2 shadow-md"
                   >
-                    <Plus className="w-4 h-4 mr-1" />
+                    <Plus className="w-5 h-5 mr-2" />
                     Add Item
-                  </button>
+                  </Button>
                 </div>
 
                 {showItemForm && (
-                  <div className="mb-4 bg-white border border-gray-200 rounded-lg p-4">
+                  <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-6 rounded-lg mb-6 border-2 border-emerald-200 shadow-md">
+                    <div className="flex justify-between items-center mb-4">
+                      <h4 className="text-lg font-bold text-gray-800">
+                        {editingIndex !== null ? 'Edit Item' : 'Add New Item'}
+                      </h4>
+                      <button
+                        onClick={() => {
+                          setShowItemForm(false);
+                          setEditingIndex(null);
+                        }}
+                        className="text-gray-500 hover:text-gray-700"
+                      >
+                        <X className="w-6 h-6" />
+                      </button>
+                    </div>
+
                     <div className="flex gap-4 mb-4">
-                      <label className="flex items-center px-3 py-2 border rounded-lg cursor-pointer">
+                      <label className="flex items-center bg-white px-4 py-2 rounded-lg border-2 border-emerald-300 cursor-pointer hover:bg-emerald-50">
                         <input
                           type="radio"
                           value="existing"
@@ -808,11 +710,11 @@ export default function PurchaseOrders() {
                             });
                             setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
                           }}
-                          className="mr-2"
+                          className="mr-2 text-emerald-600"
                         />
-                        <span className="text-sm font-medium text-gray-700">Existing Design</span>
+                        <span className="font-medium text-gray-700">Select Existing Design</span>
                       </label>
-                      <label className="flex items-center px-3 py-2 border rounded-lg cursor-pointer">
+                      <label className="flex items-center bg-white px-4 py-2 rounded-lg border-2 border-purple-300 cursor-pointer hover:bg-purple-50">
                         <input
                           type="radio"
                           value="new"
@@ -835,17 +737,15 @@ export default function PurchaseOrders() {
                             });
                             setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
                           }}
-                          className="mr-2"
+                          className="mr-2 text-purple-600"
                         />
-                        <span className="text-sm font-medium text-gray-700">New Design</span>
+                        <span className="font-medium text-gray-700">Create New Design</span>
                       </label>
                     </div>
 
                     {itemMode === 'existing' && (
-                      <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Select Design *
-                        </label>
+                      <div className="mb-4 text-left">
+                        <Label className="mb-2 block italic text-emerald-700">Select Design</Label>
                         <select
                           value={selectedDesignId}
                           onChange={(e) => {
@@ -863,10 +763,10 @@ export default function PurchaseOrders() {
                               }));
                             }
                           }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                           disabled={!formData.vendor_id}
                         >
-                          <option value="">Select</option>
+                          <option value="">Select Design</option>
                           {existingDesigns.map((design: any) => (
                             <option key={design.id} value={design.id}>
                               {design.design_no} - {design.product_group?.name || ''} - {design.color?.name || 'No Color'}
@@ -874,32 +774,28 @@ export default function PurchaseOrders() {
                           ))}
                         </select>
                         {!formData.vendor_id && (
-                          <p className="text-xs text-orange-600 mt-1">Please select a vendor first</p>
+                          <p className="text-xs text-orange-600 mt-1 italic">Please select a vendor first</p>
                         )}
                       </div>
                     )}
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4 text-left">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Design No *
-                        </label>
-                        <input
+                        <Label className="mb-2 block">Design No *</Label>
+                        <Input
                           type="text"
                           value={currentItem.design_no}
                           onChange={(e) => setCurrentItem({ ...currentItem, design_no: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          className="border-2 border-gray-300"
                           disabled={itemMode === 'existing'}
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Product Group
-                        </label>
+                        <Label className="mb-2 block">Product Group</Label>
                         <select
                           value={currentItem.product_group}
                           onChange={(e) => setCurrentItem({ ...currentItem, product_group: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                           disabled={itemMode === 'existing'}
                         >
                           <option value="">Select</option>
@@ -909,25 +805,21 @@ export default function PurchaseOrders() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          HSN Code
-                        </label>
-                        <input
+                        <Label className="mb-2 block">HSN Code</Label>
+                        <Input
                           type="text"
                           value={currentItem.hsn_code}
                           readOnly
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500"
+                          className="border-2 border-gray-300 bg-gray-50 text-gray-500"
                           placeholder="Auto-filled"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Color
-                        </label>
+                        <Label className="mb-2 block">Color</Label>
                         <select
                           value={currentItem.color}
                           onChange={(e) => setCurrentItem({ ...currentItem, color: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                           disabled={itemMode === 'existing' && !!existingDesigns.find((d: any) => d.id === selectedDesignId)?.color}
                         >
                           <option value="">Select</option>
@@ -937,40 +829,34 @@ export default function PurchaseOrders() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Cost Per Item
-                        </label>
-                        <input
+                        <Label className="mb-2 block">Cost Per Item</Label>
+                        <Input
                           type="number"
                           step="0.01"
                           value={currentItem.cost_per_item}
                           onChange={(e) => setCurrentItem({ ...currentItem, cost_per_item: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          className="border-2 border-gray-300"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Description *
-                        </label>
-                        <input
+                        <Label className="mb-2 block">Description *</Label>
+                        <Input
                           type="text"
                           value={currentItem.description}
                           onChange={(e) => setCurrentItem({ ...currentItem, description: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          className="border-2 border-gray-300"
                         />
                       </div>
                     </div>
 
-                    <div className="mb-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Size Quantities
-                      </label>
-                      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+                    <div className="mb-4 text-left">
+                      <Label className="mb-2 block">Size Quantities</Label>
+                      <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-8 gap-3">
                         {newItemSizes.map((sq, idx) => {
                           const size = sizes.find((s: any) => s.id === sq.size);
                           return (
-                            <div key={sq.size} className="bg-gray-50 p-2 rounded border border-gray-200">
-                              <div className="text-xs font-semibold mb-1 text-center">
+                            <div key={sq.size} className="bg-white p-2 rounded-lg border-2 border-emerald-100 shadow-sm transition-all hover:border-emerald-300">
+                              <div className="text-xs font-bold mb-1 text-center text-emerald-800 uppercase tracking-wider">
                                 {size?.name}
                               </div>
                               <input
@@ -983,7 +869,7 @@ export default function PurchaseOrders() {
                                   updated[idx] = { ...updated[idx], quantity: val };
                                   setNewItemSizes(updated);
                                 }}
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-center text-sm"
+                                className="w-full px-2 py-1 border border-gray-300 rounded-md text-center text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-emerald-50/30"
                               />
                             </div>
                           );
@@ -992,37 +878,36 @@ export default function PurchaseOrders() {
                     </div>
 
                     <div className="flex justify-end space-x-2">
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
                         onClick={() => {
                           setShowItemForm(false);
                           setEditingIndex(null);
                         }}
-                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                       >
                         Cancel
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
                         onClick={saveItemToList}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
                       >
                         {editingIndex !== null ? 'Update Item' : 'Add to List'}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}
 
                 <div className="overflow-x-auto">
-                  <table className="w-full border border-gray-300">
-                    <thead className="bg-gray-100">
+                  <table className="w-full border-collapse border border-gray-200 shadow-sm rounded-lg overflow-hidden">
+                    <thead className="bg-gray-50 border-b-2 border-gray-200">
                       <tr>
-                        <th className="p-2 text-left text-xs">Design</th>
-                        <th className="p-2 text-left text-xs">Details</th>
-                        <th className="p-2 text-left text-xs">Total Qty</th>
-                        <th className="p-2 text-left text-xs">Rate</th>
-                        <th className="p-2 text-left text-xs">Total</th>
-                        <th className="p-2 text-left text-xs">Action</th>
+                        <th className="p-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Design</th>
+                        <th className="p-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Details</th>
+                        <th className="p-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Total Qty</th>
+                        <th className="p-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Rate</th>
+                        <th className="p-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Total</th>
+                        <th className="p-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1064,21 +949,23 @@ export default function PurchaseOrders() {
                               <td className="p-2 text-sm font-semibold">
                                 ₹{item.total_cost.toFixed(2)}
                               </td>
-                              <td className="p-2">
+                               <td className="p-2">
                                 <div className="flex items-center space-x-2">
                                   <button
                                     type="button"
                                     onClick={() => editItem(index)}
-                                    className="text-blue-600 hover:text-blue-800 text-xs"
+                                    className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                    title="Edit"
                                   >
-                                    Edit
+                                    <Edit2 className="w-4 h-4" />
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => removeItem(index)}
-                                    className="text-red-600 hover:text-red-800 text-xs"
+                                    className="p-1 text-red-600 hover:bg-red-50 rounded transition-colors"
+                                    title="Delete"
                                   >
-                                    Delete
+                                    <Trash2 className="w-4 h-4" />
                                   </button>
                                 </div>
                               </td>
@@ -1101,17 +988,16 @@ export default function PurchaseOrders() {
               </div>
 
               <div className="flex justify-end space-x-3">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={resetForm}
-                  className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
                   disabled={loading}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center"
                 >
                   {loading ? (
                     <>
@@ -1124,7 +1010,7 @@ export default function PurchaseOrders() {
                       Create PO
                     </>
                   )}
-                </button>
+                </Button>
               </div>
             </form>
           </div>

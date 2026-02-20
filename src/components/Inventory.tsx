@@ -32,6 +32,7 @@ interface GroupedItem {
   order_number: string | null;
   gst_logic: string;
   mrp_markup_percent: number;
+  hsn_code: string;
 }
 
 export default function Inventory() {
@@ -114,6 +115,7 @@ export default function Inventory() {
           order_number: item.order_number,
           gst_logic: item.gst_logic,
           mrp_markup_percent: item.mrp_markup_percent || 100,
+          hsn_code: item.hsn_code || '',
         };
       }
 
@@ -187,6 +189,7 @@ export default function Inventory() {
             mrp_markup_percent: editingItem.mrp_markup_percent,
             gst_logic: editingItem.gst_logic,
             description: editingItem.description,
+            hsn_code: editingItem.hsn_code,
             floor: size.floor_id || null,
             modified_by: userRecord?.id || null,
             updated_at: new Date().toISOString(),
@@ -205,6 +208,48 @@ export default function Inventory() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleEditingItemFieldChange = (field: string, value: any) => {
+    if (!editingItem) return;
+    
+    setEditingItem(prev => {
+      if (!prev) return null;
+      const updated = { ...prev, [field]: value };
+      
+      if (field === 'cost' || field === 'mrp_markup_percent' || field === 'gst_logic') {
+        const cost = typeof updated.cost === 'string' ? parseFloat(updated.cost) : updated.cost;
+        const markup = typeof updated.mrp_markup_percent === 'string' ? parseFloat(updated.mrp_markup_percent) : updated.mrp_markup_percent;
+        
+        if (cost) {
+          const basePrice = cost * (1 + markup / 100);
+          let gstMultiplier = 1.05;
+          if (updated.gst_logic === 'AUTO_5_18') {
+            const estimatedMRP = basePrice * 1.05;
+            gstMultiplier = estimatedMRP < 2500 ? 1.05 : 1.18;
+          }
+          updated.mrp = parseFloat((basePrice * gstMultiplier).toFixed(2));
+        }
+      } else if (field === 'mrp') {
+        const cost = typeof updated.cost === 'string' ? parseFloat(updated.cost) : updated.cost;
+        const mrp = typeof updated.mrp === 'string' ? parseFloat(updated.mrp) : updated.mrp;
+        
+        if (cost && mrp) {
+          let gstMultiplier = 1.05;
+          if (updated.gst_logic === 'AUTO_5_18') {
+            gstMultiplier = mrp < 2500 ? 1.05 : 1.18;
+          } else if (updated.gst_logic === 'FLAT_5') {
+            gstMultiplier = 1.05;
+          }
+          
+          const basePrice = mrp / gstMultiplier;
+          const markup = ((basePrice / cost) - 1) * 100;
+          updated.mrp_markup_percent = parseFloat(markup.toFixed(2));
+        }
+      }
+      
+      return updated;
+    });
   };
 
   const filteredItems = groupedItems.filter((item) => {
@@ -300,7 +345,7 @@ export default function Inventory() {
                       <div>
                         <h3 className="text-xl font-bold text-gray-800">{item.design_no}</h3>
                         <p className="text-sm text-gray-600 font-medium">
-                          {item.product_group_name} • {item.color_name}
+                          {item.product_group_name} • {item.color_name} • HSN: {item.hsn_code}
                         </p>
                         <p className="text-xs text-gray-500 mt-1">
                           Vendor: <span className="font-semibold">{item.vendor_name}</span> ({item.vendor_code})
@@ -462,7 +507,7 @@ export default function Inventory() {
                     value={editingItem.cost === 0 ? '' : editingItem.cost}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setEditingItem({ ...editingItem, cost: val === '' ? 0 : parseFloat(val) || 0 });
+                      handleEditingItemFieldChange('cost', val === '' ? 0 : val);
                     }}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
@@ -476,7 +521,7 @@ export default function Inventory() {
                     value={editingItem.mrp_markup_percent === 0 ? '' : editingItem.mrp_markup_percent}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setEditingItem({ ...editingItem, mrp_markup_percent: val === '' ? 0 : parseFloat(val) || 0 });
+                      handleEditingItemFieldChange('mrp_markup_percent', val === '' ? 0 : val);
                     }}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
@@ -490,7 +535,7 @@ export default function Inventory() {
                     value={editingItem.mrp === 0 ? '' : editingItem.mrp}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setEditingItem({ ...editingItem, mrp: val === '' ? 0 : parseFloat(val) || 0 });
+                      handleEditingItemFieldChange('mrp', val === '' ? 0 : val);
                     }}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
@@ -500,12 +545,22 @@ export default function Inventory() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">GST Logic</label>
                   <select
                     value={editingItem.gst_logic}
-                    onChange={(e) => setEditingItem({ ...editingItem, gst_logic: e.target.value })}
+                    onChange={(e) => handleEditingItemFieldChange('gst_logic', e.target.value)}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="AUTO_5_18">AUTO (5% if &lt;2500, else 18%)</option>
                     <option value="FLAT_5">FLAT 5%</option>
                   </select>
+                </div>
+ 
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">HSN Code</label>
+                  <input
+                    type="text"
+                    value={editingItem.hsn_code}
+                    onChange={(e) => setEditingItem({ ...editingItem, hsn_code: e.target.value })}
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
 
                 <div>

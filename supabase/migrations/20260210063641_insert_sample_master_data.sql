@@ -50,7 +50,7 @@ INSERT INTO sizes (size_code, name, sort_order) VALUES
 ON CONFLICT (size_code) DO NOTHING;
 
 -- Insert Vendors
-INSERT INTO vendors (vendor_code, name, address, gstin, mobile, whatsapp, active) VALUES
+INSERT INTO vendors (vendor_code, name, address, gstin, mobile, active) VALUES
 ('KR', 'Krishna Textiles', 'Mumbai, Maharashtra', '27AABCK1234F1Z5', '9876543210', '9876543210', true),
 ('SH', 'Sharma Fashion House', 'Delhi, NCR', '07AACCS1234F1Z8', '9876543211', '9876543211', true),
 ('MK', 'Meena Kreations', 'Jaipur, Rajasthan', '08AABCM1234F1Z9', '9876543212', '9876543212', true),

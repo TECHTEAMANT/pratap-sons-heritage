@@ -35,6 +35,7 @@ export default function Reports() {
   const [purchaseDetails, setPurchaseDetails] = useState<any[]>([]);
   const [paymentReceipts, setPaymentReceipts] = useState<Record<string, any[]>>({});
   const [defectiveStock, setDefectiveStock] = useState<any[]>([]);
+  const [productGroupAnalysis, setProductGroupAnalysis] = useState<any[]>([]);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -92,6 +93,9 @@ export default function Reports() {
           break;
         case 'defective-stock':
           await loadDefectiveStock();
+          break;
+        case 'product-group-analysis':
+          await loadProductGroupAnalysis();
           break;
       }
     } catch (err) {
@@ -530,6 +534,55 @@ export default function Reports() {
 
     setDefectiveStock(data || []);
   };
+  
+  const loadProductGroupAnalysis = async () => {
+    let query = supabase
+      .from('barcode_batches')
+      .select(`
+        *,
+        product_group:product_groups(name)
+      `)
+      .eq('status', 'active');
+
+    if (selectedVendor) {
+      query = query.eq('vendor', selectedVendor);
+    }
+
+    if (selectedFloor) {
+      query = query.eq('floor', selectedFloor);
+    }
+
+    const { data } = await query;
+
+    if (!data) {
+      setProductGroupAnalysis([]);
+      return;
+    }
+
+    const groupMap = new Map<string, any>();
+
+    data.forEach(item => {
+      const groupName = item.product_group?.name || 'Unknown';
+      if (groupMap.has(groupName)) {
+        const existing = groupMap.get(groupName);
+        existing.totalIn += item.total_quantity || 0;
+        existing.totalOut += (item.total_quantity || 0) - (item.available_quantity || 0);
+        existing.remaining += item.available_quantity || 0;
+      } else {
+        groupMap.set(groupName, {
+          name: groupName,
+          totalIn: item.total_quantity || 0,
+          totalOut: (item.total_quantity || 0) - (item.available_quantity || 0),
+          remaining: item.available_quantity || 0,
+        });
+      }
+    });
+
+    const analysis = Array.from(groupMap.values())
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    setProductGroupAnalysis(analysis);
+  };
 
   const tabs = [
     { id: 'sales-summary', name: 'Sales Summary', icon: DollarSign },
@@ -543,6 +596,7 @@ export default function Reports() {
     { id: 'floorwise-sales', name: 'Floor-wise Sales', icon: FileText },
     { id: 'pending-payments', name: 'Pending Payments', icon: TrendingDown },
     { id: 'salesman-report', name: 'Salesman Report', icon: UserCheck },
+    { id: 'product-group-analysis', name: 'Product Group Analysis', icon: Archive },
   ];
 
   return (
@@ -1291,6 +1345,107 @@ export default function Reports() {
 
       {activeTab === 'salesman-report' && (
         <SalesmanReport />
+      )}
+
+      {!loading && activeTab === 'product-group-analysis' && (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h3 className="text-2xl font-bold text-gray-800 mb-6">Product Group Analysis</h3>
+          {productGroupAnalysis.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <p className="text-lg">No data available for the selected filters</p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-6 rounded-lg text-white">
+                  <p className="text-sm opacity-90">Total Inward Units</p>
+                  <p className="text-3xl font-bold">
+                    {productGroupAnalysis.reduce((sum, g) => sum + g.totalIn, 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 rounded-lg text-white">
+                  <p className="text-sm opacity-90">Total Sold Units</p>
+                  <p className="text-3xl font-bold">
+                    {productGroupAnalysis.reduce((sum, g) => sum + g.totalOut, 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-gradient-to-r from-orange-500 to-amber-600 p-6 rounded-lg text-white">
+                  <p className="text-sm opacity-90">Remaining Balance</p>
+                  <p className="text-3xl font-bold">
+                    {productGroupAnalysis.reduce((sum, g) => sum + g.remaining, 0).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Product Group</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Total Come (In)</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Total Sail (Out)</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Remaining Stock</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">Stock %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {productGroupAnalysis.map((group, idx) => {
+                      const stockPercentage = group.totalIn > 0 ? (group.remaining / group.totalIn) * 100 : 0;
+                      return (
+                        <tr key={idx} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 font-semibold text-gray-800">{group.name}</td>
+                          <td className="px-4 py-3 text-center font-bold text-blue-600">{group.totalIn.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-center font-bold text-green-600">{group.totalOut.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-center font-bold text-orange-600">{group.remaining.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <div className="w-24 bg-gray-200 rounded-full h-2">
+                                <div 
+                                  className={`h-2 rounded-full ${stockPercentage > 20 ? 'bg-green-500' : 'bg-red-500'}`}
+                                  style={{ width: `${Math.min(100, stockPercentage)}%` }}
+                                ></div>
+                              </div>
+                              <span className="text-xs font-medium text-gray-600">{stockPercentage.toFixed(1)}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <Button
+                  type="button"
+                  onClick={() => {
+                    const csvContent = [
+                      ['Product Group', 'Total Come (In)', 'Total Sail (Out)', 'Remaining Stock', 'Stock %'],
+                      ...productGroupAnalysis.map(g => [
+                        g.name,
+                        g.totalIn,
+                        g.totalOut,
+                        g.remaining,
+                        g.totalIn > 0 ? ((g.remaining / g.totalIn) * 100).toFixed(2) + '%' : '0%'
+                      ])
+                    ].map(row => row.join(',')).join('\n');
+
+                    const blob = new Blob([csvContent], { type: 'text/csv' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `product-group-analysis-${new Date().toISOString().split('T')[0]}.csv`;
+                    a.click();
+                  }}
+                  className="px-4 py-2 flex items-center"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Export to CSV
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
       )}
 
       {selectedInvoiceId && (

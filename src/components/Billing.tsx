@@ -20,6 +20,7 @@ interface BillingItem {
   gst_logic: GSTType;
   order_number: string | null;
   delivered: boolean;
+  hsn_code: string | null;
 }
 
 export default function Billing() {
@@ -150,6 +151,7 @@ export default function Billing() {
                 gst_logic: itemInfo.gst_logic as GSTType,
                 order_number: itemInfo.order_number,
                 delivered: true,
+                hsn_code: itemInfo.hsn_code,
               }];
             });
           }
@@ -188,6 +190,7 @@ export default function Billing() {
         gst_logic: item.gst_logic as GSTType,
         order_number: item.order_number,
         delivered: true,
+        hsn_code: item.hsn_code,
       },
     ]);
 
@@ -236,6 +239,7 @@ export default function Billing() {
           gst_logic: data.gst_logic as GSTType,
           order_number: data.order_number,
           delivered: true,
+          hsn_code: data.hsn_code,
         },
       ]);
 
@@ -421,7 +425,7 @@ export default function Billing() {
           barcode_8digit: item.barcode_8digit,
           design_no: item.design_no,
           product_description: item.product_description,
-          hsn_code: reverseGst.gstPercentage === 5 ? '6404' : '6403',
+          hsn_code: item.hsn_code || (reverseGst.gstPercentage === 5 ? '6404' : '6403'),
           mrp: item.mrp,
           discount: item.discount,
           taxable_value: reverseGst.basePrice,
@@ -697,6 +701,7 @@ export default function Billing() {
                 <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Sr</th>
                 <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">8-Digit Code</th>
                 <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Description</th>
+                <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">HSN</th>
                 <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">MRP</th>
                 <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">Discount %</th>
                 <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">Discount ₹</th>
@@ -720,6 +725,7 @@ export default function Billing() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm">{item.product_description}</td>
+                    <td className="px-4 py-3 text-sm">{item.hsn_code}</td>
                     <td className="px-4 py-3 text-sm text-right font-semibold">₹{item.mrp.toFixed(2)}</td>
                     <td className="px-4 py-3 text-right">
                       <Input
