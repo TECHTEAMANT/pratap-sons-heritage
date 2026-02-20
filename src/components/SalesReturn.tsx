@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { PackageX, Search, X, Plus, FileText, DollarSign, Scan } from 'lucide-react';
+import { PackageX, Search, X, Plus, FileText, Scan } from 'lucide-react';
 import { calculateGSTBreakdown, GSTTransactionType } from '../utils/gstBreakdown';
 
 interface Invoice {

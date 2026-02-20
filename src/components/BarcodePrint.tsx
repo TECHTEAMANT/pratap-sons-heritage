@@ -420,7 +420,14 @@ export default function BarcodePrint() {
     }
 
     const sizeStyles = {
-      small: { width: '50.8mm', minHeight: '38.1mm', fontSize: '8px', padding: '1mm', barcodeWidth: 2, barcodeHeight: 36 },
+      small: { 
+        width: '2.25in', 
+        minHeight: '1.5in', 
+        fontSize: '10px', 
+        padding: '2mm', 
+        barcodeWidth: 1.5, 
+        barcodeHeight: 30 
+      },
       medium: { width: '70mm', minHeight: '40mm', fontSize: '10px', padding: '1mm', barcodeWidth: 2, barcodeHeight: 50 },
       large: { width: '100mm', minHeight: '60mm', fontSize: '12px', padding: '1mm', barcodeWidth: 3, barcodeHeight: 70 }
     };
@@ -497,26 +504,30 @@ export default function BarcodePrint() {
       return `
       <div style="
         width: ${size.width};
-        min-height: ${size.minHeight};
-        border: 2px solid #000;
+        height: ${size.minHeight};
+        border: 1px solid #eee;
         padding: ${size.padding};
-        margin: 5mm;
+        margin: 0;
         page-break-inside: avoid;
-        display: inline-block;
-        font-family: Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        font-family: 'Lato', sans-serif;
         box-sizing: border-box;
         background: #fff;
+        overflow: hidden;
       ">
         <div style="text-align: center; margin-bottom: 0.5mm;">
-          <strong style="font-size: ${size.fontSize}; text-transform: uppercase;">${item.product_group?.name || ''}</strong>
+          <strong style=" font-weight: 900;font-size: ${size.fontSize}+1; text-transform: uppercase;">${item.product_group?.name || ''}</strong>
         </div>
-        <div style="text-align: center; font-family: 'Courier New', monospace; font-size: calc(${size.fontSize} - 1px); margin-bottom: 0.3mm; font-weight: bold; letter-spacing: 1px;">
+        <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: calc(${size.fontSize} - 1px); margin-bottom: 0.3mm; font-weight: 400; letter-spacing: 0.5px;">
           ${humanCode}
         </div>
         <div style="text-align: center; margin: 0.5mm 0;">
           <img src="${barcodeDataURL}" style="max-width: 95%; height: auto; display: block; margin: 0 auto;" alt="Barcode" />
         </div>
-        <div style="text-align: center; font-family: 'Courier New', monospace; font-size: calc(${size.fontSize} + 1px); font-weight: 900; margin-top: 0.3mm;">
+        <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: calc(${size.fontSize} + 1px); font-weight: 700; margin-top: 0.3mm;">
           ${item.barcode_id || ''}
         </div>
         <div style="text-align: center; font-size: calc(${size.fontSize} + 1px); font-weight: 900; margin-top: 0.2mm;">
@@ -533,15 +544,19 @@ export default function BarcodePrint() {
       <head>
         <title>Print Barcodes</title>
         <style>
+          @import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap');
           @page {
-            margin: 10mm;
+            margin: 0;
+            size: auto;
           }
           body {
             margin: 0;
             padding: 0;
+            font-family: 'Lato', sans-serif;
           }
           @media print {
             body { -webkit-print-color-adjust: exact; }
+            .no-print { display: none; }
           }
         </style>
       </head>

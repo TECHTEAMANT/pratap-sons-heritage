@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
-import logo from '../utils/A NT Logo2.png';
 import {
   LayoutDashboard,
   Package,
@@ -73,16 +72,11 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
         }`}
       >
         <div className="h-full flex flex-col">
-          <div className="py-2 px-4 border-b border-gray-200 bg-white/80 backdrop-blur">
+          <div className="py-6 px-4 border-b border-gray-200 bg-white/80 backdrop-blur">
             <div className="flex flex-col items-center">
-              {/* <img
-                src={logo}
-                alt="accountsNtax logo"
-                className="h-28 w-auto object-contain"
-              /> */}
               <div className="text-center">
-                <h1 className="-mt-10 text-xl font-bold tracking-tight text-blue-700">INVENTO ERP</h1>
-                <p className="text-xs font-medium text-gray-500">{roleLabel}</p>
+                <h1 className="text-xl font-bold tracking-tight text-blue-700">INVENTO ERP</h1>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">{roleLabel}</p>
               </div>
             </div>
           </div>

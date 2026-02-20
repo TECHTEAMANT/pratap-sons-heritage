@@ -1,12 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import {
-  TrendingUp,
-  ShoppingBag,
-  Package,
-  Users,
-  IndianRupee,
-} from 'lucide-react';
+import { TrendingUp, Package, Users, IndianRupee } from 'lucide-react';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({

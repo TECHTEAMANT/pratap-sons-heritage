@@ -493,7 +493,7 @@ export default function MasterData() {
           </td>
         ) : (
           <>
-            {Object.keys(item).filter(k => k !== 'created_at' && k !== 'updated_at' && k !== 'cities' && k !== 'city_id' && k !== 'floors' && k !== 'floor_id').map((key) => (
+            {Object.keys(item).filter(k => k !== 'id' && k !== 'created_at' && k !== 'updated_at' && k !== 'cities' && k !== 'city_id' && k !== 'floors' && k !== 'floor_id').map((key) => (
               <td key={key} className="p-4 text-sm text-gray-700">
                 {typeof item[key] === 'boolean' ? (item[key] ? 'Yes' : 'No') : item[key]}
               </td>
@@ -641,7 +641,7 @@ export default function MasterData() {
                 <tr className="bg-gray-100">
                   {data[0] &&
                     Object.keys(data[0])
-                      .filter(k => k !== 'created_at' && k !== 'updated_at' && k !== 'cities' && k !== 'city_id' && k !== 'floors' && k !== 'floor_id')
+                      .filter(k => k !== 'id' && k !== 'created_at' && k !== 'updated_at' && k !== 'cities' && k !== 'city_id' && k !== 'floors' && k !== 'floor_id')
                       .map((key) => (
                         <th key={key} className="p-4 text-left text-sm font-semibold text-gray-700">
                           {key.replace(/_/g, ' ').toUpperCase()}

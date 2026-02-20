@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { FileText, Plus, Trash2, Save, Upload, Printer, Edit2, Eye, X, Package, CheckCircle, Pencil } from 'lucide-react';
+import { FileText, Plus, Trash2, Save, Upload, Printer, Edit2, Eye, X, Pencil } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
