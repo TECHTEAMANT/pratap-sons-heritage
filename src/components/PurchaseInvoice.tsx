@@ -343,8 +343,12 @@ export default function PurchaseInvoice() {
   useEffect(() => {
     if (currentItem.product_group) {
       const group = productGroups.find(g => g.id === currentItem.product_group);
-      if (group?.floor_id) {
-        setCurrentItem((prev: any) => ({ ...prev, floor_id: group.floor_id }));
+      if (group) {
+        setCurrentItem((prev: any) => ({ 
+          ...prev, 
+          floor_id: group.floor_id || prev.floor_id,
+          hsn_code: group.hsn_code || prev.hsn_code || '' 
+        }));
       }
       
       // Reset print qty when group changes (and maintain default barcodes_per_item)
@@ -457,7 +461,8 @@ export default function PurchaseInvoice() {
           mrp,
           floor,
           barcodes_per_item,
-          payout_code
+          payout_code,
+          hsn_code
         `)
         .eq('vendor', selectedVendor);
 
@@ -477,6 +482,7 @@ export default function PurchaseInvoice() {
         floor: row.floor,
         barcodes_per_item: row.barcodes_per_item || 1,
         payout_code: row.payout_code || '',
+        hsn_code: row.hsn_code || '',
       }));
 
       setExistingDesigns(designs);
@@ -880,6 +886,7 @@ export default function PurchaseInvoice() {
         image_url: design.photos?.[0] || '',
         description: design.description || '',
         order_number: '',
+        hsn_code: design.hsn_code || '',
       });
     }
   };
@@ -2102,6 +2109,17 @@ export default function PurchaseInvoice() {
                       <option key={pg.id} value={pg.id}>{pg.name}</option>
                     ))}
                   </select>
+                </div>
+
+                <div>
+                  <Label className="mb-2 block">HSN Code</Label>
+                  <Input
+                    type="text"
+                    value={currentItem.hsn_code || ''}
+                    readOnly
+                    className="bg-gray-50 text-gray-600"
+                    placeholder="Auto-filled"
+                  />
                 </div>
 
                 <div>

@@ -23,6 +23,7 @@ export default function AddItem() {
     description: '',
     payoutCode: '',
     barcodesPerItem: 1,
+    hsnCode: '',
   });
 
   const [success, setSuccess] = useState('');
@@ -41,8 +42,12 @@ export default function AddItem() {
   useEffect(() => {
     if (formData.productGroup) {
       const group = masters.productGroups.find(g => g.id === formData.productGroup);
-      if (group?.floor_id) {
-        setFormData(prev => ({ ...prev, floor: group.floor_id }));
+      if (group) {
+        setFormData(prev => ({ 
+          ...prev, 
+          floor: group.floor_id || prev.floor,
+          hsnCode: group.hsn_code || ''
+        }));
       }
     }
   }, [formData.productGroup, masters.productGroups]);
@@ -200,6 +205,18 @@ export default function AddItem() {
         .eq('auth_user_id', userData?.user?.id)
         .maybeSingle();
 
+      // Check for duplicate design_no + vendor before inserting
+      const { data: existingMaster } = await supabase
+        .from('product_masters')
+        .select('id')
+        .eq('design_no', formData.designNo)
+        .eq('vendor', formData.vendor)
+        .maybeSingle();
+
+      if (existingMaster) {
+        throw new Error('This design number already exists for the selected vendor.');
+      }
+
       const masterData = {
         design_no: formData.designNo,
         product_group: formData.productGroup,
@@ -212,6 +229,7 @@ export default function AddItem() {
         description: formData.description || '',
         barcodes_per_item: formData.barcodesPerItem,
         payout_code: formData.payoutCode,
+        hsn_code: formData.hsnCode,
         created_by: userRecord?.id || null,
       };
 
@@ -221,7 +239,7 @@ export default function AddItem() {
 
       if (insertError) {
         if (insertError.code === '23505') {
-          throw new Error('This design already exists for the selected vendor and color');
+          throw new Error('This design number already exists for the selected vendor');
         }
         throw insertError;
       }
@@ -239,6 +257,7 @@ export default function AddItem() {
         description: '',
         payoutCode: '',
         barcodesPerItem: 1,
+        hsnCode: '',
       });
     } catch (err: any) {
       console.error('Error adding item:', err);
@@ -408,6 +427,20 @@ export default function AddItem() {
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               placeholder="Enter Payout Code"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              HSN Code
+            </label>
+            <input
+              type="text"
+              value={formData.hsnCode}
+              readOnly
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+              placeholder="Auto-filled from Product Group"
+            />
+            <p className="text-xs text-gray-500 mt-1">Populated automatically when product group is selected</p>
           </div>
 
           <div>

@@ -19,6 +19,7 @@ interface OrderItem {
   description: string;
   total_quantity: number;
   total_cost: number;
+  hsn_code: string;
 }
 
 interface PurchaseOrder {
@@ -86,6 +87,7 @@ export default function PurchaseOrders() {
     description: '',
     total_quantity: 0,
     total_cost: 0,
+    hsn_code: '',
   });
 
   const [newItemSizes, setNewItemSizes] = useState<{ size: string; quantity: number }[]>([]);
@@ -159,6 +161,18 @@ export default function PurchaseOrders() {
     }
   };
 
+  useEffect(() => {
+    if (currentItem.product_group) {
+      const group = productGroups.find(pg => pg.id === currentItem.product_group);
+      if (group) {
+        setCurrentItem(prev => ({ 
+          ...prev, 
+          hsn_code: group.hsn_code || prev.hsn_code || '' 
+        }));
+      }
+    }
+  }, [currentItem.product_group]);
+
   const loadExistingDesigns = async (vendorId: string) => {
     try {
       const { data, error } = await supabase
@@ -169,7 +183,8 @@ export default function PurchaseOrders() {
           product_group:product_groups(id, name, group_code),
           color:colors(id, name, color_code),
           vendor:vendors(id, name, vendor_code),
-          description
+          description,
+          hsn_code
         `)
         .eq('vendor', vendorId);
 
@@ -182,6 +197,7 @@ export default function PurchaseOrders() {
         color: row.color,
         vendor: row.vendor,
         description: row.description || '',
+        hsn_code: row.hsn_code || '',
       }));
 
       setExistingDesigns(designs);
@@ -247,6 +263,7 @@ export default function PurchaseOrders() {
       description: '',
       total_quantity: 0,
       total_cost: 0,
+      hsn_code: '',
     });
     setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
     setEditingIndex(null);
@@ -407,6 +424,7 @@ export default function PurchaseOrders() {
           mrp: 0,
           gst_logic: 'AUTO_5_18',
           description: description || item.product_description,
+          hsn_code: item.hsn_code || '',
           total_quantity: item.quantity,
           total_cost: item.total,
         };
@@ -786,6 +804,7 @@ export default function PurchaseOrders() {
                               description: '',
                               total_quantity: 0,
                               total_cost: 0,
+                              hsn_code: '',
                             });
                             setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
                           }}
@@ -812,6 +831,7 @@ export default function PurchaseOrders() {
                               description: '',
                               total_quantity: 0,
                               total_cost: 0,
+                              hsn_code: '',
                             });
                             setNewItemSizes(sizes.map((s: any) => ({ size: s.id, quantity: 0 })));
                           }}
@@ -839,6 +859,7 @@ export default function PurchaseOrders() {
                                 product_group: design.product_group?.id || '',
                                 color: design.color?.id || '',
                                 description: design.description || '',
+                                hsn_code: design.hsn_code || '',
                               }));
                             }
                           }}
@@ -886,6 +907,18 @@ export default function PurchaseOrders() {
                             <option key={pg.id} value={pg.id}>{pg.name}</option>
                           ))}
                         </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          HSN Code
+                        </label>
+                        <input
+                          type="text"
+                          value={currentItem.hsn_code}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500"
+                          placeholder="Auto-filled"
+                        />
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">

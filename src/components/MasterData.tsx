@@ -154,9 +154,24 @@ export default function MasterData() {
       const currentTab = tabs.find(t => t.id === activeTab);
       if (!currentTab) return;
 
+      if (currentTab.id === 'cities' && formData.city_code) {
+        const { data: existing } = await supabase
+          .from('cities')
+          .select('id')
+          .eq('city_code', formData.city_code.toUpperCase())
+          .maybeSingle();
+        
+        if (existing) {
+          throw new Error(`City Code '${formData.city_code}' already exists.`);
+        }
+      }
+
+      // Strip joined objects from formData
+      const { cities, floors, ...cleanData } = formData;
+
       const { error } = await supabase
         .from(currentTab.table)
-        .insert([formData]);
+        .insert([cleanData]);
 
       if (error) throw error;
 
@@ -180,9 +195,25 @@ export default function MasterData() {
       const currentTab = tabs.find(t => t.id === activeTab);
       if (!currentTab) return;
 
+      // Strip joined objects from formData
+      const { cities, floors, ...cleanData } = formData;
+
+      if (currentTab.id === 'cities' && formData.city_code) {
+        const { data: existing } = await supabase
+          .from('cities')
+          .select('id')
+          .eq('city_code', formData.city_code.toUpperCase())
+          .neq('id', id)
+          .maybeSingle();
+        
+        if (existing) {
+          throw new Error(`City Code '${formData.city_code}' already exists.`);
+        }
+      }
+
       const { error } = await supabase
         .from(currentTab.table)
-        .update(formData)
+        .update(cleanData)
         .eq('id', id);
 
       if (error) throw error;
@@ -441,11 +472,10 @@ export default function MasterData() {
             />
             <input
               type="text"
-              placeholder="State (e.g., Rajasthan)"
+              placeholder="State (optional)"
               value={formData.state || ''}
               onChange={(e) => setFormData({ ...formData, state: e.target.value })}
               className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-              required
             />
             <label className="flex items-center gap-2">
               <input
