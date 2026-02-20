@@ -127,7 +127,8 @@ export default function MasterData() {
       let nextNumber = 1;
       if (existingVendors && existingVendors.length > 0) {
         const lastCode = existingVendors[0].vendor_code;
-        const numberPart = lastCode.slice(2);
+        // Extract numeric part based on the length of the city code
+        const numberPart = lastCode.slice(city.city_code.length);
         nextNumber = parseInt(numberPart) + 1;
       }
 
@@ -428,7 +429,7 @@ export default function MasterData() {
               onChange={(e) => setFormData({ ...formData, city_code: e.target.value.toUpperCase() })}
               className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
-              maxLength={2}
+              maxLength={3}
             />
             <input
               type="text"
