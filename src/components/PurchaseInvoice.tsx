@@ -1008,16 +1008,16 @@ export default function PurchaseInvoice() {
           if (sizeQty.quantity <= 0) continue;
 
           const productGroup = productGroups.find(g => g.id === item.product_group);
+          const groupCode = productGroup?.group_code || (productGroup?.name ? String(productGroup.name).slice(0, 2).toUpperCase() : 'PG');
           const color = colors.find(c => c.id === item.color);
           const size = sizes.find(s => s.id === sizeQty.size);
 
           const mockBarcodeNumber = String(previewCounter).padStart(8, '0');
           previewCounter++;
 
-          const groupCode = productGroup?.group_code || 'PG';
           const colorCode = color?.color_code || '';
           const designPart = colorCode ? `${item.design_no}${colorCode}` : item.design_no;
-          const encodedPrice = encodeCostForVendor(item.mrp, 'CRAZY WOMEN');
+          const encodedPrice = encodeCostForVendor(item.cost_per_item, 'CRAZY WOMEN');
           const parts = [
             groupCode,
             designPart,
@@ -2634,7 +2634,7 @@ export default function PurchaseInvoice() {
                       <th className="border-2 border-gray-300 p-3 text-left font-bold">Details</th>
                       <th className="border-2 border-gray-300 p-3 text-left font-bold">Qty / Print</th>
                       <th className="border-2 border-gray-300 p-3 text-left font-bold">Cost</th>
-                      <th className="border-2 border-gray-300 p-3 text-left font-bold">MRP</th>
+                      <th className="border-2 border-gray-300 p-3 text-right font-bold">Cost Price</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2671,8 +2671,8 @@ export default function PurchaseInvoice() {
                           <td className="border-2 border-gray-300 p-3 text-center font-bold">
                             {preview.quantity} {preview.quantity !== preview.print_quantity && <span className="text-blue-600">({preview.print_quantity})</span>}
                           </td>
-                          <td className="border-2 border-gray-300 p-3 text-right font-semibold">₹{preview.cost}</td>
-                          <td className="border-2 border-gray-300 p-3 text-right font-semibold">₹{preview.mrp}</td>
+                          <td className="border-2 border-gray-300 p-3 text-right font-semibold">₹{preview.cost.toFixed(2)}</td>
+                          <td className="border-2 border-gray-300 p-3 text-right font-semibold text-gray-500 text-xs">MRP: ₹{preview.mrp.toFixed(2)}</td>
                         </tr>
                       );
                     })}

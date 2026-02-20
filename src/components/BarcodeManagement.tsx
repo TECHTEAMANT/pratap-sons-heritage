@@ -162,7 +162,7 @@ export default function BarcodeManagement() {
     } catch {}
 
     // Navigate in the same tab and auto-trigger print
-    const printUrl = `${window.location.origin}${window.location.pathname}#barcode-print?batch_id=${printBarcode?.id}&quantity=${printQuantity}&alias=${printBarcode?.barcode_alias_8digit}&design=${printBarcode?.design_no}&mrp=${printBarcode?.mrp}&product=${encodeURIComponent(printBarcode?.product_group?.name || '')}&color=${encodeURIComponent(printBarcode?.color?.name || '')}&size=${encodeURIComponent(printBarcode?.size?.name || '')}&vendor_code=${encodeURIComponent(printBarcode?.vendor?.vendor_code || '')}&discount_type=${printBarcode?.discount_type || ''}&discount_value=${printBarcode?.discount_value || ''}&auto=1`;
+    const printUrl = `${window.location.origin}${window.location.pathname}#barcode-print?batch_id=${printBarcode?.id}&quantity=${printQuantity}&alias=${printBarcode?.barcode_alias_8digit}&design=${printBarcode?.design_no}&mrp=${printBarcode?.mrp}&cost_actual=${printBarcode?.cost_actual || ''}&product=${encodeURIComponent(printBarcode?.product_group?.name || '')}&group_code=${encodeURIComponent(printBarcode?.product_group?.group_code || '')}&color=${encodeURIComponent(printBarcode?.color?.name || '')}&size=${encodeURIComponent(printBarcode?.size?.name || '')}&vendor_code=${encodeURIComponent(printBarcode?.vendor?.vendor_code || '')}&discount_type=${printBarcode?.discount_type || ''}&discount_value=${printBarcode?.discount_value || ''}&auto=1`;
     window.location.assign(printUrl);
     setShowPrintDialog(false);
     setPrintBarcode(null);
@@ -326,7 +326,7 @@ export default function BarcodeManagement() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Design</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Details</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payout Code</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost/MRP</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost Price/MRP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Discount</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -378,8 +378,8 @@ export default function BarcodeManagement() {
                     </td>
                     <td className="px-4 py-4">
                       <div className="text-sm">
-                        <div>Cost: ₹{barcode.cost_actual}</div>
-                        <div>MRP: ₹{barcode.mrp}</div>
+                        <div>Cost Price: ₹{barcode.cost_actual}</div>
+                        <div className="text-gray-400 text-xs text-xs">MRP: ₹{barcode.mrp}</div>
                       </div>
                     </td>
                     <td className="px-4 py-4">

@@ -31,8 +31,10 @@ export default function BarcodePrint() {
     const design = params.get('design') || '';
     const mrp = params.get('mrp') || '0';
     const product = params.get('product') || '';
+    const groupCode = params.get('group_code') || '';
     const color = params.get('color') || '';
     const size = params.get('size') || '';
+    const costActual = params.get('cost_actual') || '';
     const vendorCode = params.get('vendor_code') || '';
     const discountType = params.get('discount_type') || '';
     const discountValue = params.get('discount_value') || '';
@@ -42,7 +44,21 @@ export default function BarcodePrint() {
     if (poId) {
       loadPOItems(poId, invoice || '', order || '');
     } else if (batchId) {
-      loadBatchItems(batchId, parseInt(quantity || '1', 10), alias, design, mrp, product, color, size, vendorCode, discountType, discountValue);
+      loadBatchItems(
+        batchId, 
+        parseInt(quantity || '1', 10), 
+        alias, 
+        design, 
+        mrp, 
+        product, 
+        color, 
+        size, 
+        vendorCode, 
+        discountType, 
+        discountValue, 
+        groupCode, 
+        costActual
+      );
     } else if (barcodeId) {
       loadSingleItem(barcodeId, parseInt(quantity || '1', 10));
     } else {
@@ -146,7 +162,9 @@ export default function BarcodePrint() {
     sizeFallback?: string,
     vendorFallback?: string,
     discountTypeFallback?: string,
-    discountValueFallback?: string
+    discountValueFallback?: string,
+    groupCodeFallback?: string,
+    costActualFallback?: string
   ) => {
     setLoading(true);
     try {
@@ -188,11 +206,15 @@ export default function BarcodePrint() {
       } else if (aliasFallback) {
         const item = {
           barcode_id: aliasFallback,
-          product_group: { name: productFallback || '' },
+          product_group: { 
+            name: productFallback || '',
+            group_code: groupCodeFallback || ''
+          },
           design_no: designFallback || '',
           color: { name: colorFallback || '' },
           size: { name: sizeFallback || '' },
           mrp: parseFloat(mrpFallback || '0'),
+          cost_actual: parseFloat(costActualFallback || '0'),
           vendor_code: vendorFallback || '',
           status: 'New',
           purchase_orders: null,
@@ -208,11 +230,15 @@ export default function BarcodePrint() {
       if (aliasFallback) {
         const item = {
           barcode_id: aliasFallback,
-          product_group: { name: productFallback || '' },
+          product_group: { 
+            name: productFallback || '',
+            group_code: groupCodeFallback || ''
+          },
           design_no: designFallback || '',
           color: { name: colorFallback || '' },
           size: { name: sizeFallback || '' },
           mrp: parseFloat(mrpFallback || '0'),
+          cost_actual: parseFloat(costActualFallback || '0'),
           vendor_code: vendorFallback || '',
           status: 'New',
           purchase_orders: null,
@@ -449,15 +475,15 @@ export default function BarcodePrint() {
       const colorCode = rawColorCode || (item.color?.name ? String(item.color.name).slice(0, 2).toUpperCase() : '');
 
       const priceValue = (() => {
-        const mrp = item.mrp ?? item.cost_actual ?? item.cost_per_item ?? 0;
+        const primaryPrice = item.cost_actual ?? item.cost_per_item ?? item.mrp ?? 0;
         if (item.discount_type && item.discount_value && item.discount_value > 0) {
           if (item.discount_type === 'percentage') {
-            return mrp - (mrp * item.discount_value / 100);
+            return primaryPrice - (primaryPrice * item.discount_value / 100);
           } else {
-            return mrp - item.discount_value;
+            return primaryPrice - item.discount_value;
           }
         }
-        return mrp;
+        return primaryPrice;
       })();
       const encodedCost = encodeCostForVendor(priceValue, 'CRAZY WOMEN');
 
@@ -482,7 +508,8 @@ export default function BarcodePrint() {
       });
 
       const mrp = parseFloat(item.mrp) || 0;
-      let priceHTML = `<span>MRP: <span style="font-weight: 900;">₹${mrp.toFixed(0)}</span></span>`;
+      const costActual = parseFloat(item.cost_actual) || 0;
+      let priceHTML = `<span>Cost Price: <span style="font-weight: 900;">₹${costActual.toFixed(0)}</span></span>`;
 
       if (item.discount_type && item.discount_value && item.discount_value > 0) {
         let finalPrice = mrp;
@@ -775,7 +802,7 @@ export default function BarcodePrint() {
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">DESIGN</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">COLOR</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">SIZE</th>
-                  <th className="p-4 text-left text-sm font-semibold text-gray-700">MRP</th>
+                   <th className="p-4 text-left text-sm font-semibold text-gray-700">COST PRICE</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">INVOICE/ORDER</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">STATUS</th>
                 </tr>
@@ -809,15 +836,15 @@ export default function BarcodePrint() {
                     const colorCode = rawColorCode || (item.color?.name ? String(item.color.name).slice(0, 2).toUpperCase() : '');
 
                     const priceValue = (() => {
-                      const mrp = item.mrp ?? item.cost_actual ?? item.cost_per_item ?? 0;
+                      const primaryPrice = item.cost_actual ?? item.cost_per_item ?? item.mrp ?? 0;
                       if (item.discount_type && item.discount_value && item.discount_value > 0) {
                         if (item.discount_type === 'percentage') {
-                          return mrp - (mrp * item.discount_value / 100);
+                          return primaryPrice - (primaryPrice * item.discount_value / 100);
                         } else {
-                          return mrp - item.discount_value;
+                          return primaryPrice - item.discount_value;
                         }
                       }
-                      return mrp;
+                      return primaryPrice;
                     })();
                     const encodedCost = encodeCostForVendor(priceValue, 'CRAZY WOMEN');
 
@@ -863,22 +890,22 @@ export default function BarcodePrint() {
                             </div>
                             <div className="text-[8px] font-black border-t border-gray-200 w-full text-center pt-0.5">
                               Size: {item.size?.name || ''} | {(() => {
-                                const mrp = parseFloat(item.mrp) || 0;
+                                const costActual = parseFloat(item.cost_actual) || 0;
                                 if (item.discount_type && item.discount_value && item.discount_value > 0) {
-                                  let finalPrice = mrp;
+                                  let finalPrice = costActual;
                                   if (item.discount_type === 'percentage') {
-                                    finalPrice = mrp - (mrp * item.discount_value / 100);
+                                    finalPrice = costActual - (costActual * item.discount_value / 100);
                                   } else {
-                                    finalPrice = mrp - item.discount_value;
+                                    finalPrice = costActual - item.discount_value;
                                   }
                                   return (
                                     <>
-                                      MRP: <span className="line-through text-gray-500 mr-1">₹{mrp.toFixed(0)}</span>
+                                      Cost Price: <span className="line-through text-gray-500 mr-1">₹{costActual.toFixed(0)}</span>
                                       <span className="text-red-600">₹{finalPrice.toFixed(0)}</span>
                                     </>
                                   );
                                 }
-                                return `MRP: ₹${mrp.toFixed(0)}`;
+                                return `Cost Price: ₹${costActual.toFixed(0)}`;
                               })()}
                             </div>
                           </div>
@@ -888,26 +915,26 @@ export default function BarcodePrint() {
                         <td className="p-4 text-sm">{item.design_no}</td>
                         <td className="p-4 text-sm">{item.color?.name || 'N/A'}</td>
                         <td className="p-4 text-sm">{item.size?.name || 'N/A'}</td>
-                        <td className="p-4 text-sm font-semibold">
-                          {(() => {
-                            const mrp = parseFloat(item.mrp) || 0;
-                            if (item.discount_type && item.discount_value && item.discount_value > 0) {
-                              let finalPrice = mrp;
-                              if (item.discount_type === 'percentage') {
-                                finalPrice = mrp - (mrp * item.discount_value / 100);
-                              } else {
-                                finalPrice = mrp - item.discount_value;
-                              }
-                              return (
-                                <div>
-                                  <span className="line-through text-gray-400 text-xs block">₹{mrp.toFixed(2)}</span>
-                                  <span className="text-red-600">₹{finalPrice.toFixed(2)}</span>
-                                </div>
-                              );
-                            }
-                            return `₹${mrp.toFixed(2)}`;
-                          })()}
-                        </td>
+                         <td className="p-4 text-sm font-semibold">
+                           {(() => {
+                             const costActual = parseFloat(item.cost_actual) || 0;
+                             if (item.discount_type && item.discount_value && item.discount_value > 0) {
+                               let finalPrice = costActual;
+                               if (item.discount_type === 'percentage') {
+                                 finalPrice = costActual - (costActual * item.discount_value / 100);
+                               } else {
+                                 finalPrice = costActual - item.discount_value;
+                               }
+                               return (
+                                 <div>
+                                   <span className="line-through text-gray-400 text-xs block">₹{costActual.toFixed(2)}</span>
+                                   <span className="text-red-600">₹{finalPrice.toFixed(2)}</span>
+                                 </div>
+                               );
+                             }
+                             return `₹${costActual.toFixed(2)}`;
+                           })()}
+                         </td>
                         <td className="p-4 text-xs text-gray-600">
                           {(() => {
                             const orderNo = item.order_number || item.purchase_orders?.order_number;
