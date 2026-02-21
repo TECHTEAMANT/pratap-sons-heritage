@@ -531,7 +531,7 @@ export default function BarcodePrint() {
         <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: calc(${size.fontSize} + 2px); font-weight: 950; margin-top: 0.3mm; letter-spacing: 1px;">
           ${item.barcode_id || ''}
         </div>
-        <div style="text-align: center; border-top: 2px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1px); font-weight: 950; margin-top: 0.5mm; padding-top: 1.5mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px;">
+        <div style="text-align: center; border-top: 2px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1px); font-weight: 950; margin-top: 0.5mm; margin-bottom: 1.5mm; padding-top: 1.5mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px;">
           <span style="white-space: nowrap;">SIZE: ${(item.size?.name || '').toUpperCase()}</span>
           <span style="font-weight: 500; opacity: 0.8;">|</span>
           <span style="white-space: nowrap;">MRP: ₹${finalPrice.toFixed(0)}</span>
