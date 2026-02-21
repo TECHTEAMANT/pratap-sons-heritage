@@ -503,9 +503,10 @@ export default function BarcodePrint() {
       return `
       <div style="
         width: ${size.width};
-        height: ${size.height || size.minHeight};
+        min-height: ${size.minHeight};
         border-bottom: 2px solid #000;
         padding: ${size.padding};
+        padding-bottom: 2mm;
         margin: 0;
         page-break-before: always;
         page-break-inside: avoid;
@@ -516,7 +517,6 @@ export default function BarcodePrint() {
         font-family: 'Lato', sans-serif;
         box-sizing: border-box;
         background: #fff;
-        overflow: hidden;
         color: #000;
       ">
         <div style="text-align: center; margin-bottom: 0.5mm;">
@@ -531,7 +531,7 @@ export default function BarcodePrint() {
         <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: calc(${size.fontSize} + 2px); font-weight: 950; margin-top: 0.3mm; letter-spacing: 1px;">
           ${item.barcode_id || ''}
         </div>
-        <div style="text-align: center; border-top: 2px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1px); font-weight: 950; margin-top: 0.5mm; margin-bottom: 1.5mm; padding-top: 1.5mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px;">
+        <div style="text-align: center; border-top: 2px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1px); font-weight: 950; margin-top: 0.5mm; padding-top: 1.5mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px;">
           <span style="white-space: nowrap;">SIZE: ${(item.size?.name || '').toUpperCase()}</span>
           <span style="font-weight: 500; opacity: 0.8;">|</span>
           <span style="white-space: nowrap;">MRP: ₹${finalPrice.toFixed(0)}</span>
