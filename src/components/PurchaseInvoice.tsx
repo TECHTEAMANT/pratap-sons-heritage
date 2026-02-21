@@ -65,6 +65,7 @@ export default function PurchaseInvoice() {
   const [vendorInvoiceDate, setVendorInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<PurchaseItem[]>([]);
+  const lastAutoFilledHsn = useRef<string>('');
 
   const [taxableValue, setTaxableValue] = useState('');
   const [calculatedGST, setCalculatedGST] = useState(0);
@@ -361,24 +362,13 @@ export default function PurchaseInvoice() {
   }, [sizes]);
 
   useEffect(() => {
-    if (currentItem.product_group) {
-      const group = productGroups.find(g => g.id === currentItem.product_group);
-      if (group) {
-        setCurrentItem((prev: any) => ({ 
-          ...prev, 
-          floor_id: group.floor_id || prev.floor_id,
-          hsn_code: group.hsn_code || prev.hsn_code || '' 
-        }));
-      }
-      
-      // Reset print qty when group changes (and maintain default barcodes_per_item)
-      const barcodesPerItem = currentItem.barcodes_per_item || 1;
-      setNewItemSizes(prev => prev.map(s => ({
-        ...s,
-        print_quantity: s.quantity * barcodesPerItem
-      })));
-    }
-  }, [currentItem.product_group]);
+    // When barcodes_per_item or product_group changes, update print_quantity for all sizes
+    const barcodesPerItem = parseInt(currentItem.barcodes_per_item) || 1;
+    setNewItemSizes(prev => prev.map(s => ({
+      ...s,
+      print_quantity: s.quantity * barcodesPerItem
+    })));
+  }, [currentItem.barcodes_per_item, currentItem.product_group]);
 
   useEffect(() => {
     // When barcodes_per_item changes, update print_quantity for all sizes
@@ -426,6 +416,18 @@ export default function PurchaseInvoice() {
       const updated = { ...prev, [field]: value };
       
       // Calculate MRP or Markup depending on what changed
+      if (field === 'product_group' && value) {
+        const group = productGroups.find(g => g.id === value);
+        if (group) {
+          const skipAutoFill = updated.hsn_code && updated.hsn_code !== lastAutoFilledHsn.current;
+          if (!skipAutoFill) {
+            updated.hsn_code = group.hsn_code || '';
+            lastAutoFilledHsn.current = group.hsn_code || '';
+          }
+          updated.floor_id = group.floor_id || updated.floor_id;
+        }
+      }
+
       if (field === 'cost_per_item' || field === 'mrp_markup_percent' || field === 'gst_logic') {
         const cost = parseFloat(updated.cost_per_item) || 0;
         const markup = parseFloat(updated.mrp_markup_percent) || 0;
@@ -854,6 +856,7 @@ export default function PurchaseInvoice() {
                       <thead className="bg-gray-50 border-b">
                         <tr>
                           <th className="px-4 py-3 text-left font-semibold text-gray-700">Design</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">HSN</th>
                           <th className="px-4 py-3 text-left font-semibold text-gray-700">Details</th>
                           <th className="px-4 py-3 text-right font-semibold text-gray-700">Qty</th>
                           <th className="px-4 py-3 text-right font-semibold text-gray-700">Cost</th>
@@ -865,6 +868,7 @@ export default function PurchaseInvoice() {
                         {selectedInvoiceItems.map((item, idx) => (
                           <tr key={idx} className="hover:bg-gray-50">
                             <td className="px-4 py-3 font-medium">{item.design_no}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{item.hsn_code || '-'}</td>
                             <td className="px-4 py-3 text-xs">
                               <div className="font-semibold">{item.product_group?.name}</div>
                               <div className="text-gray-600">{item.color?.name} - {item.size?.name}</div>
@@ -1186,6 +1190,43 @@ export default function PurchaseInvoice() {
       const vendorCode = vendor?.vendor_code || 'VND';
 
       for (const item of items) {
+        // Ensure the design is saved to product_masters if it's new, or updated if hsn changed
+        const { data: existingMaster } = await supabase
+          .from('product_masters')
+          .select('id, photos, hsn_code')
+          .eq('design_no', item.design_no)
+          .eq('vendor', selectedVendor)
+          .maybeSingle();
+
+        if (existingMaster) {
+          // Update HSN if it's different (to reflect latest manual override)
+          if (item.hsn_code && item.hsn_code !== existingMaster.hsn_code) {
+            await supabase
+              .from('product_masters')
+              .update({ hsn_code: item.hsn_code })
+              .eq('id', existingMaster.id);
+          }
+        } else {
+          // Insert into product_masters since it doesn't exist
+          await supabase
+            .from('product_masters')
+            .insert([{
+              design_no: item.design_no,
+              product_group: item.product_group,
+              color: item.color && item.color !== "" ? item.color : null,
+              vendor: selectedVendor,
+              mrp: item.mrp || 0,
+              gst_logic: item.gst_logic,
+              floor: (item.floor_id && item.floor_id !== "") ? item.floor_id : null,
+              photos: item.image_url ? [item.image_url] : [],
+              description: item.description || '',
+              barcodes_per_item: item.barcodes_per_item || 1,
+              payout_code: item.payout_code || '',
+              hsn_code: item.hsn_code,
+              created_by: userRecord?.id || null,
+            }]);
+        }
+
         for (const sizeQty of item.sizes) {
           if (sizeQty.quantity <= 0) continue;
 
@@ -1471,6 +1512,45 @@ export default function PurchaseInvoice() {
 
       if (poUpdateError) throw poUpdateError;
 
+      for (const item of items) {
+        // Ensure the design is saved to product_masters if it's new, or updated if hsn changed
+        const { data: existingMaster } = await supabase
+          .from('product_masters')
+          .select('id, photos, hsn_code')
+          .eq('design_no', item.design_no)
+          .eq('vendor', selectedVendor)
+          .maybeSingle();
+
+        if (existingMaster) {
+          // Update HSN if it's different (to reflect latest manual override)
+          if (item.hsn_code && item.hsn_code !== existingMaster.hsn_code) {
+            await supabase
+              .from('product_masters')
+              .update({ hsn_code: item.hsn_code })
+              .eq('id', existingMaster.id);
+          }
+        } else {
+          // Insert into product_masters since it doesn't exist
+          await supabase
+            .from('product_masters')
+            .insert([{
+              design_no: item.design_no,
+              product_group: item.product_group,
+              color: item.color && item.color !== "" ? item.color : null,
+              vendor: selectedVendor,
+              mrp: item.mrp || 0,
+              gst_logic: item.gst_logic,
+              floor: (item.floor_id && item.floor_id !== "") ? item.floor_id : null,
+              photos: item.image_url ? [item.image_url] : [],
+              description: item.description || '',
+              barcodes_per_item: item.barcodes_per_item || 1,
+              payout_code: item.payout_code || '',
+              hsn_code: item.hsn_code,
+              created_by: userRecord?.id || null,
+            }]);
+        }
+      }
+
       let originalMap = originalInvoiceQuantities;
       const originalVendorId = currentPO.vendor || selectedVendor;
 
@@ -1754,7 +1834,8 @@ export default function PurchaseInvoice() {
             mrp,
             floor,
             barcodes_per_item,
-            payout_code
+            payout_code,
+            hsn_code
           `)
           .eq('vendor', po.vendor)
           .in('design_no', designNos);
@@ -1774,6 +1855,7 @@ export default function PurchaseInvoice() {
             floor: row.floor || '',
             barcodes_per_item: row.barcodes_per_item || 1,
             payout_code: row.payout_code || '',
+            hsn_code: row.hsn_code || '',
           };
         });
       }
@@ -2445,6 +2527,7 @@ export default function PurchaseInvoice() {
                 <thead className="bg-gradient-to-r from-emerald-100 to-teal-100">
                   <tr>
                     <th className="px-3 py-2 text-left text-xs font-bold text-gray-700 uppercase">Design</th>
+                    <th className="px-3 py-2 text-left text-xs font-bold text-gray-700 uppercase">HSN</th>
                     <th className="px-3 py-2 text-left text-xs font-bold text-gray-700 uppercase">Details</th>
                     <th className="px-3 py-2 text-center text-xs font-bold text-gray-700 uppercase">Sizes/Qty</th>
                     <th className="px-3 py-2 text-right text-xs font-bold text-gray-700 uppercase">Cost (Taxable)</th>
@@ -2468,6 +2551,9 @@ export default function PurchaseInvoice() {
                           {item.order_number && (
                             <div className="text-xs text-orange-600 font-semibold">Order: {item.order_number}</div>
                           )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="text-sm font-medium text-gray-600">{item.hsn_code || '-'}</div>
                         </td>
                         <td className="px-3 py-3 text-sm">
                           <div>{productGroups.find(pg => pg.id === item.product_group)?.name}</div>

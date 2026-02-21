@@ -36,6 +36,7 @@ export default function AddItem() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const hiddenCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const lastAutoFilledHsn = useRef<string>('');
 
   useEffect(() => {
     loadMasterData();
@@ -45,11 +46,18 @@ export default function AddItem() {
     if (formData.productGroup) {
       const group = masters.productGroups.find(g => g.id === formData.productGroup);
       if (group) {
-        setFormData(prev => ({ 
-          ...prev, 
-          floor: group.floor_id || prev.floor,
-          hsnCode: group.hsn_code || ''
-        }));
+        setFormData(prev => {
+          const skipAutoFill = prev.hsnCode && prev.hsnCode !== lastAutoFilledHsn.current;
+          const newHsn = (skipAutoFill ? prev.hsnCode : group.hsn_code) || '';
+          if (!skipAutoFill) {
+            lastAutoFilledHsn.current = group.hsn_code || '';
+          }
+          return { 
+            ...prev, 
+            floor: group.floor_id || prev.floor,
+            hsnCode: newHsn
+          };
+        });
       }
     }
   }, [formData.productGroup, masters.productGroups]);

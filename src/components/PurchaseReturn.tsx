@@ -11,6 +11,7 @@ interface ReturnItem {
   color: string;
   size: string;
   cost: number;
+  hsn_code: string;
   condition: string;
   reason: string;
 }
@@ -146,6 +147,7 @@ export default function PurchaseReturn() {
       color: item.color?.name || '',
       size: item.size?.name || '',
       cost: item.cost_actual || 0,
+      hsn_code: item.hsn_code || '',
       condition: 'defective',
       reason: '',
     };
@@ -203,6 +205,7 @@ export default function PurchaseReturn() {
         color: data.color?.name || '',
         size: data.size?.name || '',
         cost: data.cost_actual || 0,
+        hsn_code: data.hsn_code || '',
         condition: 'defective',
         reason: '',
       };
@@ -286,6 +289,7 @@ export default function PurchaseReturn() {
             reason: item.reason,
             condition: item.condition,
             cost: item.cost,
+            hsn_code: item.hsn_code,
           }]);
 
         if (itemError) throw itemError;
@@ -542,6 +546,7 @@ export default function PurchaseReturn() {
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Color</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase text-blue-600 font-bold">HSN</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Condition</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reason</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -556,6 +561,7 @@ export default function PurchaseReturn() {
                           <td className="px-4 py-3 text-sm">{item.color}</td>
                           <td className="px-4 py-3 text-sm">{item.size}</td>
                           <td className="px-4 py-3 text-sm">₹{item.cost.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-sm font-bold text-blue-600">{item.hsn_code || '-'}</td>
                           <td className="px-4 py-3 text-sm">
                             <select
                               value={item.condition}

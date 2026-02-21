@@ -235,8 +235,10 @@ export async function generatePurchaseTallyExportData(purchaseOrderData: any): P
 
   if (purchaseOrderData.purchase_items) {
     purchaseOrderData.purchase_items.forEach((item: any) => {
-      const productGroupId = item.product_group || '';
-      const productGroupName = item.product_groups?.name || '';
+      // Support both pre-mapped items (from purchase_items table with joins)
+      // and raw items (from purchase_order_items table)
+      const productGroupId = item.product_group || item.product_groups?.name || 'unknown';
+      const productGroupName = item.product_groups?.name || item.product_description || 'Unknown';
       const hsnCode = item.product_groups?.hsn_code || '';
 
       if (!itemsGroupedByProductGroup[productGroupId]) {

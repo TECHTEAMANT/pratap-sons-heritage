@@ -448,14 +448,15 @@ export default function BarcodePrint() {
     const sizeStyles = {
       small: { 
         width: '2.25in', 
+        height: '1.5in',
         minHeight: '1.5in', 
         fontSize: '10px', 
         padding: '2mm', 
         barcodeWidth: 1.5, 
         barcodeHeight: 30 
       },
-      medium: { width: '70mm', minHeight: '40mm', fontSize: '10px', padding: '1mm', barcodeWidth: 2, barcodeHeight: 50 },
-      large: { width: '100mm', minHeight: '60mm', fontSize: '12px', padding: '1mm', barcodeWidth: 3, barcodeHeight: 70 }
+      medium: { width: '70mm', height: '40mm', minHeight: '40mm', fontSize: '10px', padding: '1mm', barcodeWidth: 2, barcodeHeight: 50 },
+      large: { width: '100mm', height: '60mm', minHeight: '60mm', fontSize: '12px', padding: '1mm', barcodeWidth: 3, barcodeHeight: 70 }
     };
 
     const size = sizeStyles[printSize];
@@ -502,14 +503,15 @@ export default function BarcodePrint() {
       return `
       <div style="
         width: ${size.width};
-        height: ${size.minHeight};
-        border: 1px solid #000;
+        height: ${size.height || size.minHeight};
+        border-bottom: 2px solid #000;
         padding: ${size.padding};
         margin: 0;
+        page-break-before: always;
         page-break-inside: avoid;
         display: flex;
         flex-direction: column;
-        justify-content: center;
+        justify-content: space-around;
         align-items: center;
         font-family: 'Lato', sans-serif;
         box-sizing: border-box;
@@ -529,10 +531,10 @@ export default function BarcodePrint() {
         <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: calc(${size.fontSize} + 2px); font-weight: 950; margin-top: 0.3mm; letter-spacing: 1px;">
           ${item.barcode_id || ''}
         </div>
-        <div style="text-align: center; border-top: 2px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1px); font-weight: 950; margin-top: 0.5mm; padding-top: 0.8mm;">
-          <span>SIZE: <span style="font-weight: 950;">${(item.size?.name || '').toUpperCase()}</span></span>
-          &nbsp;|&nbsp;
-          <span>MRP : ₹<span style="font-weight: 950;">${finalPrice.toFixed(0)}</span></span>
+        <div style="text-align: center; border-top: 2px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1px); font-weight: 950; margin-top: 0.5mm; padding-top: 1.5mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px;">
+          <span style="white-space: nowrap;">SIZE: ${(item.size?.name || '').toUpperCase()}</span>
+          <span style="font-weight: 500; opacity: 0.8;">|</span>
+          <span style="white-space: nowrap;">MRP: ₹${finalPrice.toFixed(0)}</span>
         </div>
       </div>
       `;

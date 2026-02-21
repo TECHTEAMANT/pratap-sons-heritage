@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { BarChart3, Package, TrendingDown, DollarSign, FileText, Download, ShoppingCart, Users, TrendingUp, Archive, AlertTriangle, UserCheck, ArrowUp, ArrowDown } from 'lucide-react';
+import { BarChart3, Package, TrendingDown, DollarSign, FileText, Download, ShoppingCart, Users, TrendingUp, Archive, AlertTriangle, UserCheck, ArrowUp, ArrowDown, PackageX } from 'lucide-react';
 import SalesmanReport from './SalesmanReport';
 import SalesInvoicePDF from './SalesInvoicePDF';
 import { Button } from './ui/button';
@@ -36,6 +36,8 @@ export default function Reports() {
   const [paymentReceipts, setPaymentReceipts] = useState<Record<string, any[]>>({});
   const [defectiveStock, setDefectiveStock] = useState<any[]>([]);
   const [productGroupAnalysis, setProductGroupAnalysis] = useState<any[]>([]);
+  const [purchaseAnalysis, setPurchaseAnalysis] = useState<any[]>([]);
+  const [purchaseReturnAnalysis, setPurchaseReturnAnalysis] = useState<any[]>([]);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -96,6 +98,12 @@ export default function Reports() {
           break;
         case 'product-group-analysis':
           await loadProductGroupAnalysis();
+          break;
+        case 'purchase-analysis':
+          await loadPurchaseAnalysis();
+          break;
+        case 'purchase-return-analysis':
+          await loadPurchaseReturnAnalysis();
           break;
       }
     } catch (err) {
@@ -584,6 +592,85 @@ export default function Reports() {
     setProductGroupAnalysis(analysis);
   };
 
+  const loadPurchaseAnalysis = async () => {
+    let query = supabase
+      .from('purchase_items')
+      .select(`
+        *,
+        purchase_order:purchase_orders!inner(
+          po_number,
+          order_date,
+          invoice_number,
+          vendor:vendors(name)
+        ),
+        product_group:product_groups(name),
+        color:colors(name),
+        size:sizes(name)
+      `)
+      .gte('purchase_order.order_date', startDate)
+      .lte('purchase_order.order_date', endDate)
+      .order('purchase_order.order_date', { ascending: false });
+
+    if (selectedVendor) {
+      query = query.eq('purchase_order.vendor', selectedVendor);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Error loading purchase analysis:', error);
+      return;
+    }
+
+    setPurchaseAnalysis(data || []);
+  };
+
+  const loadPurchaseReturnAnalysis = async () => {
+    let query = supabase
+      .from('purchase_return_items')
+      .select(`
+        *,
+        purchase_return:purchase_returns!inner(
+          return_number,
+          return_date,
+          vendor:vendors(name)
+        )
+      `)
+      .gte('purchase_return.return_date', startDate)
+      .lte('purchase_return.return_date', endDate)
+      .order('purchase_return.return_date', { ascending: false });
+
+    if (selectedVendor) {
+      query = query.eq('purchase_return.vendor_id', selectedVendor);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Error loading purchase return analysis:', error);
+      return;
+    }
+
+    const enhancedData = await Promise.all((data || []).map(async (item: any) => {
+      const { data: batchData } = await supabase
+        .from('barcode_batches')
+        .select(`
+          design_no,
+          product_group:product_groups(name)
+        `)
+        .eq('id', item.item_id)
+        .maybeSingle();
+
+      return {
+        ...item,
+        design_no: item.design_no || batchData?.design_no || 'N/A',
+        product_group: batchData?.product_group || { name: 'N/A' }
+      };
+    }));
+
+    setPurchaseReturnAnalysis(enhancedData);
+  };
+
   const tabs = [
     { id: 'sales-summary', name: 'Sales Summary', icon: DollarSign },
     { id: 'purchase-summary', name: 'Purchase Summary', icon: ShoppingCart },
@@ -597,6 +684,8 @@ export default function Reports() {
     { id: 'pending-payments', name: 'Pending Payments', icon: TrendingDown },
     { id: 'salesman-report', name: 'Salesman Report', icon: UserCheck },
     { id: 'product-group-analysis', name: 'Product Group Analysis', icon: Archive },
+    { id: 'purchase-analysis', name: 'Purchase Analysis', icon: TrendingUp },
+    { id: 'purchase-return-analysis', name: 'Purchase Return Analysis', icon: PackageX },
   ];
 
   return (
@@ -916,6 +1005,7 @@ export default function Reports() {
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Barcode</th>
                   <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Design</th>
+                  <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">HSN</th>
                   <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Product Group</th>
                   <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Available</th>
                   <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Sold</th>
@@ -930,6 +1020,7 @@ export default function Reports() {
                   <tr key={idx} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono text-sm">{item.barcode}</td>
                     <td className="px-4 py-3 font-semibold">{item.design}</td>
+                    <td className="px-4 py-3">{item.hsn_code || '-'}</td>
                     <td className="px-4 py-3">{item.productGroup}</td>
                     <td className="px-4 py-3 text-center">{item.availableQty}</td>
                     <td className="px-4 py-3 text-center">{item.soldQty}</td>
@@ -1444,6 +1535,118 @@ export default function Reports() {
                 </Button>
               </div>
             </>
+          )}
+        </div>
+      )}
+
+      {!loading && activeTab === 'purchase-return-analysis' && (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h3 className="text-2xl font-bold text-gray-800 mb-6 font-[Outfit]">Purchase Return Analysis (Item Wise)</h3>
+          {purchaseReturnAnalysis.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <p className="text-lg">No return items found for the selected period</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Return #</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Vendor</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Barcode</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Design</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase font-[Outfit] text-red-600">HSN</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Product</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Condition</th>
+                    <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">Cost</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {purchaseReturnAnalysis.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 font-semibold text-gray-800">{item.purchase_return?.return_number}</td>
+                      <td className="px-4 py-3 text-sm">
+                        {new Date(item.purchase_return?.return_date).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3 text-sm">{item.purchase_return?.vendor?.name}</td>
+                      <td className="px-4 py-3 text-sm font-mono">{item.barcode_id}</td>
+                      <td className="px-4 py-3 font-bold text-gray-800">{item.design_no}</td>
+                      <td className="px-4 py-3 font-bold text-red-600 bg-red-50/50">{item.hsn_code || '-'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{item.product_group?.name}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                          item.condition === 'defective' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'
+                        }`}>
+                          {item.condition}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-red-600">
+                        ₹{(item.cost || 0).toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!loading && activeTab === 'purchase-analysis' && (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h3 className="text-2xl font-bold text-gray-800 mb-6 font-[Outfit]">Purchase Analysis (Item Wise)</h3>
+          {purchaseAnalysis.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <p className="text-lg">No purchase items found for the selected period</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">PO / Inv #</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Vendor</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Design</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase font-[Outfit] text-blue-600">HSN</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Product Group</th>
+                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Details</th>
+                    <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Qty</th>
+                    <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">Cost</th>
+                    <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">MRP</th>
+                    <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 uppercase">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {purchaseAnalysis.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-gray-800">{item.purchase_order?.po_number}</div>
+                        <div className="text-[10px] text-gray-500 font-mono">{item.purchase_order?.invoice_number}</div>
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {new Date(item.purchase_order?.order_date).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3 text-sm">{item.purchase_order?.vendor?.name}</td>
+                      <td className="px-4 py-3 font-bold text-gray-800">{item.design_no}</td>
+                      <td className="px-4 py-3 font-bold text-blue-600 bg-blue-50/50">{item.hsn_code || '-'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{item.product_group?.name}</td>
+                      <td className="px-4 py-3 text-[11px] text-gray-500">
+                        {item.color?.name && <span>{item.color.name} - </span>}
+                        {item.size?.name}
+                      </td>
+                      <td className="px-4 py-3 text-center font-bold text-gray-800">{item.quantity}</td>
+                      <td className="px-4 py-3 text-right text-sm">₹{item.cost_per_item.toLocaleString('en-IN')}</td>
+                      <td className="px-4 py-3 text-right text-sm">₹{item.mrp.toLocaleString('en-IN')}</td>
+                      <td className="px-4 py-3 text-right font-bold text-emerald-600">
+                        ₹{(item.cost_per_item * item.quantity).toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
