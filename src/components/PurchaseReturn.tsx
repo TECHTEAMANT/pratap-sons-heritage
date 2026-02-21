@@ -320,9 +320,13 @@ export default function PurchaseReturn() {
         const currentAvailable = batch?.available_quantity ?? 0;
         const newAvailable = currentAvailable > 0 ? currentAvailable - 1 : 0;
 
+        // If no units remain after return, mark as 'returned' so it disappears from inventory
+        // Inventory.tsx filters by status='active', so 'returned' items are excluded
+        const newStatus = newAvailable === 0 ? 'returned' : 'active';
+
         const { error: updateError } = await supabase
           .from('barcode_batches')
-          .update({ available_quantity: newAvailable })
+          .update({ available_quantity: newAvailable, status: newStatus })
           .eq('id', item.item_id);
 
         if (updateError) throw updateError;
