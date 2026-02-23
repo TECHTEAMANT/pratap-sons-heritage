@@ -1,12 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import {
-  TrendingUp,
-  ShoppingBag,
-  Package,
-  Users,
-  IndianRupee,
-} from 'lucide-react';
+import { TrendingUp, Package, Users, IndianRupee } from 'lucide-react';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -121,9 +115,9 @@ export default function Dashboard() {
       </div>
 
       <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg p-8 text-white">
-        <h3 className="text-2xl font-bold mb-4">Welcome to Retail ERP</h3>
+        <h3 className="text-2xl font-bold mb-4">Welcome to INVENTO ERP</h3>
         <p className="text-blue-100 mb-4">
-          Complete GST-compliant retail management system for ladies garment showroom
+          Complete inventory management system for ladies garment showroom
         </p>
         <ul className="space-y-2">
           <li className="flex items-center">

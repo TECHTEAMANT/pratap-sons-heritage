@@ -20,6 +20,7 @@ interface OrderItem {
   selling_price: number;
   discount_percentage: number;
   gst_percentage: number;
+  hsn_code?: string;
   total: number;
 }
 
@@ -50,6 +51,12 @@ interface SalesOrder {
 export default function SalesOrder() {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const hiddenCameraInputRef = useRef<HTMLInputElement | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -87,6 +94,7 @@ export default function SalesOrder() {
       selling_price: 0,
       discount_percentage: 0,
       gst_percentage: 5,
+      hsn_code: '', // Added hsn_code to initial item state
       total: 0,
     },
   ]);
@@ -255,6 +263,67 @@ export default function SalesOrder() {
       setUploadingAttachment(false);
     }
   };
+
+  const openCamera = async () => {
+    setCameraError('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      hiddenCameraInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch (err) {
+      console.error('Error accessing camera:', err);
+      hiddenCameraInputRef.current?.click();
+    }
+  };
+
+  const closeCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setCameraOpen(false);
+  };
+
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      setFormData(prev => ({ ...prev, attachment_url: dataUrl }));
+    }
+    closeCamera();
+  };
+
+  useEffect(() => {
+    if (cameraOpen && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(err => {
+        console.error('Video play error:', err);
+      });
+    }
+  }, [cameraOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, []);
 
   const calculateItemTotal = (item: OrderItem) => {
     const subtotal = item.quantity * item.selling_price;
@@ -769,6 +838,24 @@ export default function SalesOrder() {
                       <Upload className="w-5 h-5 mr-2" />
                       {uploadingAttachment ? 'Uploading...' : 'Upload'}
                     </button>
+                    <button
+                      type="button"
+                      onClick={openCamera}
+                      disabled={uploadingAttachment}
+                      className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center shadow-md disabled:bg-gray-400"
+                    >
+                      <Upload className="w-5 h-5 mr-2" />
+                      Take Photo
+                    </button>
+                    <input
+                      ref={hiddenCameraInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleAttachmentUpload}
+                      className="hidden"
+                      disabled={uploadingAttachment}
+                    />
                     {formData.attachment_url && (
                       <a
                         href={formData.attachment_url}
@@ -842,6 +929,7 @@ export default function SalesOrder() {
                       <tr>
                         <th className="p-2 text-left text-xs">Barcode</th>
                         <th className="p-2 text-left text-xs">Design No</th>
+                        <th className="p-2 text-left text-xs">HSN</th>
                         <th className="p-2 text-left text-xs">Description *</th>
                         <th className="p-2 text-left text-xs">Qty *</th>
                         <th className="p-2 text-left text-xs">Price *</th>
@@ -868,6 +956,15 @@ export default function SalesOrder() {
                               value={item.design_no}
                               onChange={(e) => handleItemChange(index, 'design_no', e.target.value)}
                               className="w-full px-2 py-1 border rounded text-sm"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              value={item.hsn_code || ''}
+                              onChange={(e) => handleItemChange(index, 'hsn_code', e.target.value)}
+                              className="w-full px-2 py-1 border rounded text-sm bg-gray-50"
+                              placeholder="HSN"
                             />
                           </td>
                           <td className="p-2">
@@ -1177,6 +1274,36 @@ export default function SalesOrder() {
           </div>
         </div>
       </div>
+      {cameraOpen && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg p-4 w-[92vw] max-w-md">
+            <div className="aspect-video bg-black rounded overflow-hidden">
+              <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            </div>
+            <div className="mt-3 flex gap-3 justify-center">
+              <button
+                type="button"
+                onClick={capturePhoto}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+              >
+                Capture
+              </button>
+              <button
+                type="button"
+                onClick={closeCamera}
+                className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
+            {cameraError && (
+              <div className="text-red-600 text-sm mt-2 text-center">
+                {cameraError}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

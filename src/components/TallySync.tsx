@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { generateTallyExportData, downloadTallyJSON, generatePurchaseTallyExportData } from '../utils/tally';
 import { Download, Check, RefreshCw, FileJson, AlertCircle, Loader, ShoppingCart, Package } from 'lucide-react';
@@ -23,7 +23,8 @@ interface TallySyncRecord {
 export default function TallySync() {
   const [syncRecords, setSyncRecords] = useState<TallySyncRecord[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState('');        // generate-phase errors
+  const [listError, setListError] = useState(''); // load-phase errors
   const [success, setSuccess] = useState('');
   const [activeTab, setActiveTab] = useState<'sales' | 'purchase'>('sales');
   const [filter, setFilter] = useState<'all' | 'pending' | 'synced'>('pending');
@@ -34,7 +35,7 @@ export default function TallySync() {
 
   const loadSyncRecords = async () => {
     setLoading(true);
-    setError('');
+    setListError(''); // Only clear the LIST error, NOT the generate error
 
     try {
       let query = supabase
@@ -49,10 +50,21 @@ export default function TallySync() {
 
       const { data, error: queryError } = await query;
 
-      if (queryError) throw queryError;
+      if (queryError) {
+        // Fallback: show all records if sync_type column missing (migration not applied)
+        const { data: allData, error: allError } = await supabase
+          .from('tally_sync')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (allError) throw allError;
+        setSyncRecords(allData || []);
+        setListError(`DB column issue – apply migration. Details: ${queryError.message}`);
+        return;
+      }
+
       setSyncRecords(data || []);
     } catch (err: any) {
-      setError(err.message);
+      setListError(err.message);
     } finally {
       setLoading(false);
     }
@@ -127,55 +139,127 @@ export default function TallySync() {
     setSuccess('');
 
     try {
+      // Fetch all purchase orders (both PO and PI prefixes)
       const { data: purchaseOrders, error: poError } = await supabase
         .from('purchase_orders')
-        .select(`
-          *,
-          vendors (vendor_code, name),
-          purchase_items (
-            *,
-            product_groups (*),
-            colors (*),
-            sizes (*)
-          )
-        `)
+        .select('*')
         .order('order_date', { ascending: false });
 
       if (poError) throw poError;
 
+      if (!purchaseOrders || purchaseOrders.length === 0) {
+        setSuccess('No purchase records found to sync.');
+        setLoading(false);
+        return;
+      }
+
       let created = 0;
-      for (const po of purchaseOrders || []) {
-        const { data: existing } = await supabase
-          .from('tally_sync')
-          .select('id')
-          .eq('purchase_order_id', po.id)
-          .eq('sync_type', 'purchase')
-          .maybeSingle();
+      let skipped = 0;
+      const errors: string[] = [];
 
-        if (existing) continue;
+      for (const po of purchaseOrders) {
+        try {
+          // Check if already synced
+          const { data: existing } = await supabase
+            .from('tally_sync')
+            .select('id')
+            .eq('purchase_order_id', po.id)
+            .eq('sync_type', 'purchase')
+            .maybeSingle();
 
-        const tallyData = await generatePurchaseTallyExportData(po);
+          if (existing) {
+            skipped++;
+            continue;
+          }
 
-        const { error: insertError } = await supabase
-          .from('tally_sync')
-          .insert([{
-            sync_type: 'purchase',
-            purchase_order_id: po.id,
-            invoice_number: po.invoice_number || po.po_number,
-            invoice_date: po.order_date,
-            customer_name: po.vendors?.name || '',
-            customer_mobile: '',
-            total_amount: po.total_amount || 0,
-            sync_data: tallyData,
-            sync_status: 'pending',
-          }]);
+          // Fetch vendor name separately
+          let vendorName = '';
+          if (po.vendor) {
+            const { data: vendorData } = await supabase
+              .from('vendors')
+              .select('name')
+              .eq('id', po.vendor)
+              .maybeSingle();
+            vendorName = vendorData?.name || '';
+          }
 
-        if (!insertError) {
-          created++;
+          // Fetch items based on PO number prefix
+          // PI records → purchase_items table (FK: po_id)
+          // PO records → purchase_order_items table (FK: purchase_order_id)
+          const isPurchaseInvoice = (po.po_number || '').startsWith('PI');
+          let purchaseItems: any[] = [];
+
+          if (isPurchaseInvoice) {
+            const { data: piItems, error: piErr } = await supabase
+              .from('purchase_items')
+              .select('*, product_groups(*), colors(*), sizes(*)')
+              .eq('po_id', po.id);
+
+            if (piErr) throw piErr;
+
+            purchaseItems = (piItems || []).map((item: any) => ({
+              product_group: item.product_group,
+              product_groups: item.product_groups,
+              colors: item.colors,
+              sizes: item.sizes,
+              quantity: item.quantity || 0,
+              total_cost: (item.cost_per_item || 0) * (item.quantity || 0),
+            }));
+          } else {
+            const { data: poItems, error: poItemErr } = await supabase
+              .from('purchase_order_items')
+              .select('*')
+              .eq('purchase_order_id', po.id);
+
+            if (poItemErr) throw poItemErr;
+
+            purchaseItems = (poItems || []).map((item: any) => ({
+              product_group: null,
+              product_groups: { name: item.product_description || 'N/A', hsn_code: '' },
+              colors: null,
+              sizes: null,
+              quantity: item.quantity || 0,
+              total_cost: item.total || 0,
+            }));
+          }
+
+          // Build enriched PO data with items and vendor info
+          const enrichedPO = {
+            ...po,
+            purchase_items: purchaseItems,
+            vendors: { name: vendorName },
+          };
+          const tallyData = await generatePurchaseTallyExportData(enrichedPO);
+
+          const { error: insertError } = await supabase
+            .from('tally_sync')
+            .insert([{
+              sync_type: 'purchase',
+              purchase_order_id: po.id,
+              invoice_number: po.invoice_number || po.po_number,
+              invoice_date: po.order_date,
+              customer_name: vendorName,
+              customer_mobile: '',
+              total_amount: po.total_amount || 0,
+              sync_data: tallyData,
+              sync_status: 'pending',
+            }]);
+
+          if (insertError) {
+            errors.push(`${po.po_number}: ${insertError.message}`);
+          } else {
+            created++;
+          }
+        } catch (itemErr: any) {
+          errors.push(`${po.po_number}: ${itemErr.message}`);
         }
       }
 
-      setSuccess(`Generated ${created} new purchase sync records`);
+      const summary = `Found ${purchaseOrders.length} purchase records → Created: ${created}, Skipped: ${skipped}, Failed: ${errors.length}`;
+      setSuccess(summary);
+      if (errors.length > 0) {
+        setError(`Errors: ${errors.slice(0, 3).join(' | ')}`);
+      }
       loadSyncRecords();
     } catch (err: any) {
       setError(err.message);
@@ -327,6 +411,13 @@ export default function TallySync() {
           <div className="mb-4 bg-red-50 text-red-600 p-4 rounded-lg flex items-center">
             <AlertCircle className="w-5 h-5 mr-2" />
             {error}
+          </div>
+        )}
+
+        {listError && (
+          <div className="mb-4 bg-orange-50 text-orange-600 p-4 rounded-lg flex items-center">
+            <AlertCircle className="w-5 h-5 mr-2" />
+            {listError}
           </div>
         )}
 

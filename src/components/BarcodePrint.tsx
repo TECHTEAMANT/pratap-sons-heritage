@@ -31,8 +31,10 @@ export default function BarcodePrint() {
     const design = params.get('design') || '';
     const mrp = params.get('mrp') || '0';
     const product = params.get('product') || '';
+    const groupCode = params.get('group_code') || '';
     const color = params.get('color') || '';
     const size = params.get('size') || '';
+    const costActual = params.get('cost_actual') || '';
     const vendorCode = params.get('vendor_code') || '';
     const discountType = params.get('discount_type') || '';
     const discountValue = params.get('discount_value') || '';
@@ -42,7 +44,21 @@ export default function BarcodePrint() {
     if (poId) {
       loadPOItems(poId, invoice || '', order || '');
     } else if (batchId) {
-      loadBatchItems(batchId, parseInt(quantity || '1', 10), alias, design, mrp, product, color, size, vendorCode, discountType, discountValue);
+      loadBatchItems(
+        batchId, 
+        parseInt(quantity || '1', 10), 
+        alias, 
+        design, 
+        mrp, 
+        product, 
+        color, 
+        size, 
+        vendorCode, 
+        discountType, 
+        discountValue, 
+        groupCode, 
+        costActual
+      );
     } else if (barcodeId) {
       loadSingleItem(barcodeId, parseInt(quantity || '1', 10));
     } else {
@@ -85,23 +101,42 @@ export default function BarcodePrint() {
 
       if (poError) throw poError;
 
-      const { data: batches, error: batchError } = await supabase
-        .from('barcode_batches')
-        .select(`
-          *,
-          product_group:product_groups(name, group_code),
-          color:colors(name, color_code),
-          size:sizes(name, size_code)
-        `)
-        .eq('po_id', poId);
+      // Fetch batches and purchase_items in parallel
+      const [batchRes, piRes] = await Promise.all([
+        supabase
+          .from('barcode_batches')
+          .select(`
+            *,
+            product_group:product_groups(name, group_code, hsn_code),
+            color:colors(name, color_code),
+            size:sizes(name, size_code)
+          `)
+          .eq('po_id', poId),
+        supabase
+          .from('purchase_items')
+          .select('design_no, size, order_number')
+          .eq('po_id', poId),
+      ]);
 
-      if (batchError) throw batchError;
+      if (batchRes.error) throw batchRes.error;
 
+      // Build a lookup: design_no -> order_number
+      // (all size variants of a design in the same invoice share the same order_number)
+      const orderLookup: Record<string, string> = {};
+      (piRes.data || []).forEach((pi: any) => {
+        if (pi.order_number && !orderLookup[pi.design_no]) {
+          orderLookup[pi.design_no] = pi.order_number;
+        }
+      });
+
+      const batches = batchRes.data || [];
       const itemsWithQuantity: any[] = [];
-      batches?.forEach((batch: any) => {
+      batches.forEach((batch: any) => {
         const qty = batch.print_quantity !== null && batch.print_quantity !== undefined 
           ? batch.print_quantity 
           : (batch.total_quantity || 0);
+        // Get order_number from purchase_items lookup, fallback to URL param
+        const batchOrderNumber = orderLookup[batch.design_no] || orderNumber;
         for (let i = 0; i < qty; i++) {
           itemsWithQuantity.push({
             ...batch,
@@ -113,7 +148,7 @@ export default function BarcodePrint() {
             vendor: po.vendors,
             po_id: poId,
             invoice_number: invoiceNumber,
-            order_number: orderNumber,
+            order_number: batchOrderNumber,
           });
         }
       });
@@ -146,7 +181,9 @@ export default function BarcodePrint() {
     sizeFallback?: string,
     vendorFallback?: string,
     discountTypeFallback?: string,
-    discountValueFallback?: string
+    discountValueFallback?: string,
+    groupCodeFallback?: string,
+    costActualFallback?: string
   ) => {
     setLoading(true);
     try {
@@ -154,7 +191,7 @@ export default function BarcodePrint() {
         .from('barcode_batches')
         .select(`
           *,
-          product_group:product_groups(name, group_code),
+          product_group:product_groups(name, group_code, hsn_code),
           color:colors(name, color_code),
           size:sizes(name, size_code),
           vendor:vendors(name, vendor_code),
@@ -188,11 +225,15 @@ export default function BarcodePrint() {
       } else if (aliasFallback) {
         const item = {
           barcode_id: aliasFallback,
-          product_group: { name: productFallback || '' },
+          product_group: { 
+            name: productFallback || '',
+            group_code: groupCodeFallback || ''
+          },
           design_no: designFallback || '',
           color: { name: colorFallback || '' },
           size: { name: sizeFallback || '' },
           mrp: parseFloat(mrpFallback || '0'),
+          cost_actual: parseFloat(costActualFallback || '0'),
           vendor_code: vendorFallback || '',
           status: 'New',
           purchase_orders: null,
@@ -208,11 +249,15 @@ export default function BarcodePrint() {
       if (aliasFallback) {
         const item = {
           barcode_id: aliasFallback,
-          product_group: { name: productFallback || '' },
+          product_group: { 
+            name: productFallback || '',
+            group_code: groupCodeFallback || ''
+          },
           design_no: designFallback || '',
           color: { name: colorFallback || '' },
           size: { name: sizeFallback || '' },
           mrp: parseFloat(mrpFallback || '0'),
+          cost_actual: parseFloat(costActualFallback || '0'),
           vendor_code: vendorFallback || '',
           status: 'New',
           purchase_orders: null,
@@ -236,7 +281,7 @@ export default function BarcodePrint() {
         .from('barcode_batches')
         .select(`
           *,
-          product_group:product_groups(name, group_code),
+          product_group:product_groups(name, group_code, hsn_code),
           color:colors(name, color_code),
           size:sizes(name, size_code),
           vendor:vendors(name, vendor_code),
@@ -261,7 +306,7 @@ export default function BarcodePrint() {
         .from('product_items')
         .select(`
           *,
-          product_group:product_groups(name, group_code),
+          product_group:product_groups(name, group_code, hsn_code),
           color:colors(name, color_code),
           size:sizes(name, size_code),
           vendor:vendors(name, vendor_code),
@@ -292,7 +337,7 @@ export default function BarcodePrint() {
         .from('barcode_batches')
         .select(`
           *,
-          product_group:product_groups(name, group_code),
+          product_group:product_groups(name, group_code, hsn_code),
           color:colors(name, color_code),
           size:sizes(name, size_code),
           vendor:vendors(name, vendor_code),
@@ -420,53 +465,42 @@ export default function BarcodePrint() {
     }
 
     const sizeStyles = {
-      small: { width: '50.8mm', minHeight: '38.1mm', fontSize: '8px', padding: '1mm', barcodeWidth: 2, barcodeHeight: 36 },
-      medium: { width: '70mm', minHeight: '40mm', fontSize: '10px', padding: '1mm', barcodeWidth: 2, barcodeHeight: 50 },
-      large: { width: '100mm', minHeight: '60mm', fontSize: '12px', padding: '1mm', barcodeWidth: 3, barcodeHeight: 70 }
+      small: { 
+        width: '2.25in', 
+        height: '1.5in',
+        minHeight: '1.5in', 
+        fontSize: '6.5pt', 
+        padding: '1.5mm', 
+        barcodeWidth: 2, 
+        barcodeHeight: 28,
+        barcodeImgHeight: '15mm'
+      },
+      medium: { width: '70mm', height: '40mm', minHeight: '40mm', fontSize: '8pt', padding: '1mm', barcodeWidth: 2, barcodeHeight: 50, barcodeImgHeight: '20mm' },
+      large: { width: '100mm', height: '60mm', minHeight: '60mm', fontSize: '10pt', padding: '1mm', barcodeWidth: 3, barcodeHeight: 70, barcodeImgHeight: '28mm' }
     };
 
     const size = sizeStyles[printSize];
 
     const barcodeHTML = selectedItemsData.map(item => {
-      const rawGroupCode = item.product_group?.group_code || item.group_code || '';
-      const rawVendorCode =
-        item.vendor?.vendor_code ||
-        item.vendor_code ||
-        poData?.vendor?.vendor_code ||
-        '';
-      const groupCode = rawGroupCode || (item.product_group?.name ? String(item.product_group.name).slice(0, 2).toUpperCase() : '');
-      const vendorCode = rawVendorCode || (item.vendor?.name || poData?.vendor?.name ? String(item.vendor?.name || poData?.vendor?.name).slice(0, 2).toUpperCase() : '');
-
       const design = item.design_no || '';
-      const rawColorCode = item.color?.color_code || item.color_code || '';
-      const colorCode = rawColorCode || (item.color?.name ? String(item.color.name).slice(0, 2).toUpperCase() : '');
-
       const priceValue = (() => {
-        const mrp = item.mrp ?? item.cost_actual ?? item.cost_per_item ?? 0;
+        const primaryPrice = item.cost_actual ?? item.cost_per_item ?? item.mrp ?? 0;
         if (item.discount_type && item.discount_value && item.discount_value > 0) {
           if (item.discount_type === 'percentage') {
-            return mrp - (mrp * item.discount_value / 100);
+            return primaryPrice - (primaryPrice * item.discount_value / 100);
           } else {
-            return mrp - item.discount_value;
+            return primaryPrice - item.discount_value;
           }
         }
-        return mrp;
+        return primaryPrice;
       })();
       const encodedCost = encodeCostForVendor(priceValue, 'CRAZY WOMEN');
-
-      const designPart = colorCode ? `${design}${colorCode}` : design;
-      const pricePart = encodedCost || (priceValue ? String(priceValue) : '');
-
-      const humanParts = [
-        groupCode,
-        designPart,
-        vendorCode,
-        pricePart
-      ].filter(Boolean);
-
-      const humanCode = (humanParts.length > 0
-        ? humanParts.join('-')
-        : (design || item.barcode_id || ''));
+      
+      const groupCode = item.product_group?.group_code || '';
+      const colorCode = item.color?.color_code || '';
+      const vendorCode = item.vendor?.vendor_code || item.vendor_code || '';
+      const orderNo = item.order_number || '';
+      const secondLine = [groupCode, design, colorCode, vendorCode, encodedCost, orderNo].filter(Boolean).join('-');
 
       const barcodeDataURL = generateBarcodeDataURL(item.barcode_id, {
         width: size.barcodeWidth,
@@ -474,58 +508,59 @@ export default function BarcodePrint() {
         displayValue: false,
       });
 
-      const mrp = parseFloat(item.mrp) || 0;
-      let priceHTML = `<span>MRP: <span style="font-weight: 900;">₹${mrp.toFixed(0)}</span></span>`;
+      const topLine = item.product_group?.name || '';
 
+      const mrp = parseFloat(item.mrp) || 0;
+      let finalPrice = mrp;
       if (item.discount_type && item.discount_value && item.discount_value > 0) {
-        let finalPrice = mrp;
         if (item.discount_type === 'percentage') {
           finalPrice = mrp - (mrp * item.discount_value / 100);
         } else {
           finalPrice = mrp - item.discount_value;
         }
-        
-        // Ensure final price is not negative
-        finalPrice = Math.max(0, finalPrice);
-
-        priceHTML = `
-          <span style="text-decoration: line-through; font-size: 0.9em; color: #555;">₹${mrp.toFixed(0)}</span>
-          <span style="font-weight: 900; font-size: 1.1em;">₹${finalPrice.toFixed(0)}</span>
-        `;
       }
+      finalPrice = Math.max(0, finalPrice);
 
       return `
       <div style="
         width: ${size.width};
-        min-height: ${size.minHeight};
-        border: 2px solid #000;
+        height: ${size.height};
+        border-bottom: 2px solid #000;
         padding: ${size.padding};
-        margin: 5mm;
+        padding-bottom: 1.5mm;
+        margin: 0;
+        page-break-before: always;
         page-break-inside: avoid;
-        display: inline-block;
-        font-family: Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: center;
+        font-family: 'Lato', sans-serif;
         box-sizing: border-box;
         background: #fff;
+        overflow: hidden;
+        color: #000;
       ">
-        <div style="text-align: center; margin-bottom: 0.5mm;">
-          <strong style="font-size: ${size.fontSize}; text-transform: uppercase;">${item.product_group?.name || ''}</strong>
+        <div style="text-align: center; width: 100%; margin-bottom: 0.5mm;">
+          <strong style="font-weight: 900; font-size: calc(${size.fontSize} + 1pt); text-transform: uppercase; line-height: 1.1;">${topLine}</strong>
         </div>
-        <div style="text-align: center; font-family: 'Courier New', monospace; font-size: calc(${size.fontSize} - 1px); margin-bottom: 0.3mm; font-weight: bold; letter-spacing: 1px;">
-          ${humanCode}
+        <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: ${size.fontSize}; font-weight: 800; letter-spacing: 0.3px; width: 100%; line-height: 1.1; margin-bottom: 0.5mm;">
+          ${secondLine}
         </div>
-        <div style="text-align: center; margin: 0.5mm 0;">
-          <img src="${barcodeDataURL}" style="max-width: 95%; height: auto; display: block; margin: 0 auto;" alt="Barcode" />
+        <div style="text-align: center; width: 100%; line-height: 0; margin-bottom: 0.5mm;">
+          <img src="${barcodeDataURL}" style="width: 98%; height: ${size.barcodeImgHeight}; display: block; margin: 0 auto; object-fit: fill;" alt="Barcode" />
         </div>
-        <div style="text-align: center; font-family: 'Courier New', monospace; font-size: calc(${size.fontSize} + 1px); font-weight: 900; margin-top: 0.3mm;">
+        <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: ${size.fontSize}; font-weight: 900; letter-spacing: 1px; width: 100%; line-height: 1.1;">
           ${item.barcode_id || ''}
         </div>
-        <div style="text-align: center; font-size: calc(${size.fontSize} + 1px); font-weight: 900; margin-top: 0.2mm;">
-          <span>Size: <span style="font-weight: 900;">${item.size?.name || ''}</span></span>
-          &nbsp;|&nbsp;
-          ${priceHTML}
+        <div style="text-align: center; border-top: 1.5px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1pt); font-weight: 900; padding-top: 1mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px; line-height: 1.1; margin-top: auto;">
+          <span style="white-space: nowrap;">SIZE: ${(item.size?.name || '').toUpperCase()}</span>
+          <span style="font-weight: 400; opacity: 0.7;">|</span>
+          <span style="white-space: nowrap;">MRP: \u20B9${finalPrice.toFixed(0)}</span>
         </div>
       </div>
-    `}).join('');
+      `;
+    }).join('');
 
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -533,15 +568,19 @@ export default function BarcodePrint() {
       <head>
         <title>Print Barcodes</title>
         <style>
+          @import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap');
           @page {
-            margin: 10mm;
+            margin: 0;
+            size: auto;
           }
           body {
             margin: 0;
             padding: 0;
+            font-family: 'Lato', sans-serif;
           }
           @media print {
             body { -webkit-print-color-adjust: exact; }
+            .no-print { display: none; }
           }
         </style>
       </head>
@@ -760,7 +799,7 @@ export default function BarcodePrint() {
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">DESIGN</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">COLOR</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">SIZE</th>
-                  <th className="p-4 text-left text-sm font-semibold text-gray-700">MRP</th>
+                   <th className="p-4 text-left text-sm font-semibold text-gray-700">MRP</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">INVOICE/ORDER</th>
                   <th className="p-4 text-left text-sm font-semibold text-gray-700">STATUS</th>
                 </tr>
@@ -773,52 +812,34 @@ export default function BarcodePrint() {
                     </td>
                   </tr>
                 ) : (
-                filteredItems.map((item, index) => {
+                  filteredItems.map((item, index) => {
                     const barcodeImageURL = generateBarcodeDataURL(item.barcode_id, {
                       width: 2,
                       height: 40,
                       displayValue: false,
                     });
 
-                    const rawGroupCode = item.product_group?.group_code || item.group_code || '';
-                    const rawVendorCode =
-                      item.vendor?.vendor_code ||
-                      item.vendor_code ||
-                      poData?.vendor?.vendor_code ||
-                      '';
-                    const groupCode = rawGroupCode || (item.product_group?.name ? String(item.product_group.name).slice(0, 2).toUpperCase() : '');
-                    const vendorCode = rawVendorCode || (item.vendor?.name || poData?.vendor?.name ? String(item.vendor?.name || poData?.vendor?.name).slice(0, 2).toUpperCase() : '');
-
                     const design = item.design_no || '';
-                    const rawColorCode = item.color?.color_code || item.color_code || '';
-                    const colorCode = rawColorCode || (item.color?.name ? String(item.color.name).slice(0, 2).toUpperCase() : '');
-
                     const priceValue = (() => {
-                      const mrp = item.mrp ?? item.cost_actual ?? item.cost_per_item ?? 0;
+                      const primaryPrice = item.cost_actual ?? item.cost_per_item ?? item.mrp ?? 0;
                       if (item.discount_type && item.discount_value && item.discount_value > 0) {
                         if (item.discount_type === 'percentage') {
-                          return mrp - (mrp * item.discount_value / 100);
+                          return primaryPrice - (primaryPrice * item.discount_value / 100);
                         } else {
-                          return mrp - item.discount_value;
+                          return primaryPrice - item.discount_value;
                         }
                       }
-                      return mrp;
+                      return primaryPrice;
                     })();
                     const encodedCost = encodeCostForVendor(priceValue, 'CRAZY WOMEN');
+                    
+                    const groupCode = item.product_group?.group_code || '';
+                    const colorCode = item.color?.color_code || '';
+                    const vendorCode = item.vendor?.vendor_code || item.vendor_code || '';
+                    const orderNo = item.order_number || '';
+                    const secondLine = [groupCode, design, colorCode, vendorCode, encodedCost, orderNo].filter(Boolean).join('-');
 
-                    const designPart = colorCode ? `${design}${colorCode}` : design;
-                    const pricePart = encodedCost || (priceValue ? String(priceValue) : '');
-
-                    const humanParts = [
-                      groupCode,
-                      designPart,
-                      vendorCode,
-                      pricePart
-                    ].filter(Boolean);
-
-                    const humanCode = (humanParts.length > 0
-                      ? humanParts.join('-')
-                      : (design || item.barcode_id || ''));
+                    const topLine = item.product_group?.name || '';
 
                     return (
                       <tr key={`${item.barcode_id}-${index}`} className="border-b hover:bg-gray-50">
@@ -832,11 +853,11 @@ export default function BarcodePrint() {
                         </td>
                         <td className="p-4">
                           <div className="bg-white p-2 rounded border-2 border-gray-800 flex flex-col items-center gap-0.5" style={{ minWidth: '140px' }}>
-                            <div className="text-[8px] font-bold uppercase truncate w-full text-center">
-                              {item.product_group?.name}
+                            <div className="text-[8px] font-extrabold uppercase truncate w-full text-center">
+                              {topLine}
                             </div>
-                            <div className="text-[7px] font-mono font-bold truncate w-full text-center">
-                              {humanCode}
+                            <div className="text-[7px] font-mono font-black truncate w-full text-center">
+                              {secondLine}
                             </div>
                             {barcodeImageURL ? (
                               <img src={barcodeImageURL} alt="Barcode" className="h-8 object-contain" />
@@ -846,26 +867,24 @@ export default function BarcodePrint() {
                             <div className="text-[8px] font-mono font-bold">
                               {item.barcode_id}
                             </div>
-                            <div className="text-[8px] font-black border-t border-gray-200 w-full text-center pt-0.5">
-                              Size: {item.size?.name || ''} | {(() => {
-                                const mrp = parseFloat(item.mrp) || 0;
-                                if (item.discount_type && item.discount_value && item.discount_value > 0) {
-                                  let finalPrice = mrp;
-                                  if (item.discount_type === 'percentage') {
-                                    finalPrice = mrp - (mrp * item.discount_value / 100);
-                                  } else {
-                                    finalPrice = mrp - item.discount_value;
-                                  }
-                                  return (
-                                    <>
-                                      MRP: <span className="line-through text-gray-500 mr-1">₹{mrp.toFixed(0)}</span>
-                                      <span className="text-red-600">₹{finalPrice.toFixed(0)}</span>
-                                    </>
-                                  );
-                                }
-                                return `MRP: ₹${mrp.toFixed(0)}`;
-                              })()}
-                            </div>
+                             <div className="text-[8px] font-black border-t border-gray-200 w-full text-center pt-0.5">
+                               Size: {item.size?.name || ''} | {(() => {
+                                 const mrp = parseFloat(item.mrp) || 0;
+                                 let finalPrice = mrp;
+                                 if (item.discount_type && item.discount_value && item.discount_value > 0) {
+                                   if (item.discount_type === 'percentage') {
+                                     finalPrice = mrp - (mrp * item.discount_value / 100);
+                                   } else {
+                                     finalPrice = mrp - item.discount_value;
+                                   }
+                                 }
+                                 return (
+                                   <>
+                                     MRP : <span className="text-gray-900 font-extrabold">₹{Math.max(0, finalPrice).toFixed(0)}</span>
+                                   </>
+                                 );
+                               })()}
+                             </div>
                           </div>
                         </td>
                         <td className="p-4 font-mono text-sm">{item.barcode_id}</td>
@@ -873,26 +892,26 @@ export default function BarcodePrint() {
                         <td className="p-4 text-sm">{item.design_no}</td>
                         <td className="p-4 text-sm">{item.color?.name || 'N/A'}</td>
                         <td className="p-4 text-sm">{item.size?.name || 'N/A'}</td>
-                        <td className="p-4 text-sm font-semibold">
-                          {(() => {
-                            const mrp = parseFloat(item.mrp) || 0;
-                            if (item.discount_type && item.discount_value && item.discount_value > 0) {
-                              let finalPrice = mrp;
-                              if (item.discount_type === 'percentage') {
-                                finalPrice = mrp - (mrp * item.discount_value / 100);
-                              } else {
-                                finalPrice = mrp - item.discount_value;
+                         <td className="p-4 text-sm font-semibold">
+                            {(() => {
+                              const mrp = parseFloat(item.mrp) || 0;
+                              if (item.discount_type && item.discount_value && item.discount_value > 0) {
+                                let finalPrice = mrp;
+                                if (item.discount_type === 'percentage') {
+                                  finalPrice = mrp - (mrp * item.discount_value / 100);
+                                } else {
+                                  finalPrice = mrp - item.discount_value;
+                                }
+                                return (
+                                  <div>
+                                    <span className="line-through text-gray-400 text-xs block">₹{mrp.toFixed(2)}</span>
+                                    <span className="text-red-600">₹{finalPrice.toFixed(2)}</span>
+                                  </div>
+                                );
                               }
-                              return (
-                                <div>
-                                  <span className="line-through text-gray-400 text-xs block">₹{mrp.toFixed(2)}</span>
-                                  <span className="text-red-600">₹{finalPrice.toFixed(2)}</span>
-                                </div>
-                              );
-                            }
-                            return `₹${mrp.toFixed(2)}`;
-                          })()}
-                        </td>
+                              return `₹${mrp.toFixed(2)}`;
+                            })()}
+                         </td>
                         <td className="p-4 text-xs text-gray-600">
                           {(() => {
                             const orderNo = item.order_number || item.purchase_orders?.order_number;

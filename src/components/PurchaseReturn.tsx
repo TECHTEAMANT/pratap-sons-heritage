@@ -11,6 +11,7 @@ interface ReturnItem {
   color: string;
   size: string;
   cost: number;
+  hsn_code: string;
   condition: string;
   reason: string;
 }
@@ -146,6 +147,7 @@ export default function PurchaseReturn() {
       color: item.color?.name || '',
       size: item.size?.name || '',
       cost: item.cost_actual || 0,
+      hsn_code: item.hsn_code || '',
       condition: 'defective',
       reason: '',
     };
@@ -203,6 +205,7 @@ export default function PurchaseReturn() {
         color: data.color?.name || '',
         size: data.size?.name || '',
         cost: data.cost_actual || 0,
+        hsn_code: data.hsn_code || '',
         condition: 'defective',
         reason: '',
       };
@@ -286,9 +289,47 @@ export default function PurchaseReturn() {
             reason: item.reason,
             condition: item.condition,
             cost: item.cost,
+            hsn_code: item.hsn_code,
           }]);
 
         if (itemError) throw itemError;
+
+        if (item.condition === 'defective') {
+          const { error: defectiveError } = await supabase
+            .from('defective_stock')
+            .insert([{
+              item_id: item.item_id,
+              barcode: item.barcode_id,
+              quantity: -1,
+              reason: item.reason || 'Returned to vendor',
+              notes: `Purchase return ${returnNumber}`,
+              marked_by: userRecord?.id || null,
+            }]);
+
+          if (defectiveError) throw defectiveError;
+        }
+
+        const { data: batch, error: batchError } = await supabase
+          .from('barcode_batches')
+          .select('id, available_quantity')
+          .eq('id', item.item_id)
+          .maybeSingle();
+
+        if (batchError) throw batchError;
+
+        const currentAvailable = batch?.available_quantity ?? 0;
+        const newAvailable = currentAvailable > 0 ? currentAvailable - 1 : 0;
+
+        // If no units remain after return, mark as 'returned' so it disappears from inventory
+        // Inventory.tsx filters by status='active', so 'returned' items are excluded
+        const newStatus = newAvailable === 0 ? 'returned' : 'active';
+
+        const { error: updateError } = await supabase
+          .from('barcode_batches')
+          .update({ available_quantity: newAvailable, status: newStatus })
+          .eq('id', item.item_id);
+
+        if (updateError) throw updateError;
       }
 
       setSuccess(`Purchase return ${returnNumber} created successfully with ${returnItems.length} items`);
@@ -509,6 +550,7 @@ export default function PurchaseReturn() {
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Color</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase text-blue-600 font-bold">HSN</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Condition</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reason</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -523,6 +565,7 @@ export default function PurchaseReturn() {
                           <td className="px-4 py-3 text-sm">{item.color}</td>
                           <td className="px-4 py-3 text-sm">{item.size}</td>
                           <td className="px-4 py-3 text-sm">₹{item.cost.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-sm font-bold text-blue-600">{item.hsn_code || '-'}</td>
                           <td className="px-4 py-3 text-sm">
                             <select
                               value={item.condition}

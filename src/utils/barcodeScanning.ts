@@ -29,6 +29,7 @@ export interface BarcodeInfo {
   discount_value: number | null;
   discount_start_date: string | null;
   discount_end_date: string | null;
+  hsn_code: string | null;
 }
 
 export async function scanBarcode(code: string): Promise<BarcodeInfo | null> {
@@ -37,11 +38,12 @@ export async function scanBarcode(code: string): Promise<BarcodeInfo | null> {
       .from('barcode_batches')
       .select(`
         *,
-        product_group:product_groups(id, name, group_code),
+        product_group:product_groups(id, name, group_code, hsn_code),
         color:colors(id, name, color_code),
         size:sizes(id, name, size_code),
         vendor:vendors(id, name, vendor_code),
-        floor:floors(id, name, floor_code)
+        floor:floors(id, name, floor_code),
+        hsn_code
       `)
       .eq('barcode_alias_8digit', code)
       .eq('status', 'active')
@@ -85,6 +87,7 @@ export async function scanBarcode(code: string): Promise<BarcodeInfo | null> {
       discount_value: data.discount_value || null,
       discount_start_date: data.discount_start_date || null,
       discount_end_date: data.discount_end_date || null,
+      hsn_code: data.hsn_code || data.product_group?.hsn_code || null,
     };
   } catch (err) {
     console.error('Error in scanBarcode:', err);
@@ -133,11 +136,12 @@ export async function getAvailableBarcodes(filters?: {
       .from('barcode_batches')
       .select(`
         *,
-        product_group:product_groups(id, name, group_code),
+        product_group:product_groups(id, name, group_code, hsn_code),
         color:colors(id, name, color_code),
         size:sizes(id, name, size_code),
         vendor:vendors(id, name, vendor_code),
-        floor:floors(id, name, floor_code)
+        floor:floors(id, name, floor_code),
+        hsn_code
       `)
       .eq('status', 'active')
       .gt('available_quantity', 0);
@@ -194,6 +198,7 @@ export async function getAvailableBarcodes(filters?: {
       discount_value: item.discount_value || null,
       discount_start_date: item.discount_start_date || null,
       discount_end_date: item.discount_end_date || null,
+      hsn_code: item.hsn_code || item.product_group?.hsn_code || null,
     }));
   } catch (err) {
     console.error('Error in getAvailableBarcodes:', err);

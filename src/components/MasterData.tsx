@@ -32,6 +32,8 @@ export default function MasterData() {
   ];
 
   useEffect(() => {
+    setError('');
+    setSuccess('');
     loadData();
     if (activeTab === 'vendors') {
       loadCities();
@@ -125,7 +127,8 @@ export default function MasterData() {
       let nextNumber = 1;
       if (existingVendors && existingVendors.length > 0) {
         const lastCode = existingVendors[0].vendor_code;
-        const numberPart = lastCode.slice(2);
+        // Extract numeric part based on the length of the city code
+        const numberPart = lastCode.slice(city.city_code.length);
         nextNumber = parseInt(numberPart) + 1;
       }
 
@@ -142,6 +145,21 @@ export default function MasterData() {
     setFormData({ ...formData, city_id: cityId, vendor_code: vendorCode });
   };
 
+  const cleanSupabasePayload = (payload: any) => {
+    const cleaned = { ...payload };
+    // Strip non-primitive fields (objects and arrays) that cause "column not found" errors
+    Object.keys(cleaned).forEach(key => {
+      if (cleaned[key] !== null && (typeof cleaned[key] === 'object' || Array.isArray(cleaned[key]))) {
+        delete cleaned[key];
+      }
+    });
+    // Strip metadata fields
+    delete cleaned.id;
+    delete cleaned.created_at;
+    delete cleaned.updated_at;
+    return cleaned;
+  };
+
   const handleAdd = async () => {
     setError('');
     setSuccess('');
@@ -151,11 +169,25 @@ export default function MasterData() {
       const currentTab = tabs.find(t => t.id === activeTab);
       if (!currentTab) return;
 
-      const { error } = await supabase
-        .from(currentTab.table)
-        .insert([formData]);
+      if (currentTab.id === 'cities' && formData.city_code) {
+        const { data: existing } = await supabase
+          .from('cities')
+          .select('id')
+          .eq('city_code', formData.city_code.toUpperCase())
+          .maybeSingle();
+        
+        if (existing) {
+          throw new Error(`City Code '${formData.city_code}' already exists.`);
+        }
+      }
 
-      if (error) throw error;
+      const payload = cleanSupabasePayload(formData);
+
+      const { error: err } = await supabase
+        .from(currentTab.table)
+        .insert([payload]);
+
+      if (err) throw err;
 
       setSuccess('Added successfully!');
       setFormData({});
@@ -177,12 +209,27 @@ export default function MasterData() {
       const currentTab = tabs.find(t => t.id === activeTab);
       if (!currentTab) return;
 
-      const { error } = await supabase
+      if (currentTab.id === 'cities' && formData.city_code) {
+        const { data: existing } = await supabase
+          .from('cities')
+          .select('id')
+          .eq('city_code', formData.city_code.toUpperCase())
+          .neq('id', id)
+          .maybeSingle();
+        
+        if (existing) {
+          throw new Error(`City Code '${formData.city_code}' already exists.`);
+        }
+      }
+
+      const payload = cleanSupabasePayload(formData);
+
+      const { error: err } = await supabase
         .from(currentTab.table)
-        .update(formData)
+        .update(payload)
         .eq('id', id);
 
-      if (error) throw error;
+      if (err) throw err;
 
       setSuccess('Updated successfully!');
       setEditingId(null);
@@ -205,7 +252,7 @@ export default function MasterData() {
               placeholder="Group Code (e.g., KRT)"
               value={formData.group_code || ''}
               onChange={(e) => setFormData({ ...formData, group_code: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <input
@@ -213,7 +260,7 @@ export default function MasterData() {
               placeholder="Name (e.g., Kurtis)"
               value={formData.name || ''}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <input
@@ -221,12 +268,12 @@ export default function MasterData() {
               placeholder="HSN Code (optional)"
               value={formData.hsn_code || ''}
               onChange={(e) => setFormData({ ...formData, hsn_code: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             />
             <select
               value={formData.floor_id || ''}
               onChange={(e) => setFormData({ ...formData, floor_id: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             >
               <option value="">Select Floor (optional)</option>
               {floors.map((floor) => (
@@ -239,7 +286,7 @@ export default function MasterData() {
               placeholder="Description (optional)"
               value={formData.description || ''}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               rows={3}
             />
           </>
@@ -253,7 +300,7 @@ export default function MasterData() {
               placeholder="Color Code (e.g., RED)"
               value={formData.color_code || ''}
               onChange={(e) => setFormData({ ...formData, color_code: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <input
@@ -261,7 +308,7 @@ export default function MasterData() {
               placeholder="Name (e.g., Red)"
               value={formData.name || ''}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <div className="flex gap-2">
@@ -277,7 +324,7 @@ export default function MasterData() {
                 placeholder="Hex Value (e.g., #FF0000)"
                 value={formData.hex_value || ''}
                 onChange={(e) => setFormData({ ...formData, hex_value: e.target.value })}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               />
             </div>
           </>
@@ -291,7 +338,7 @@ export default function MasterData() {
               placeholder="Size Code (e.g., M)"
               value={formData.size_code || ''}
               onChange={(e) => setFormData({ ...formData, size_code: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <input
@@ -299,7 +346,7 @@ export default function MasterData() {
               placeholder="Name (e.g., Medium)"
               value={formData.name || ''}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <input
@@ -307,7 +354,7 @@ export default function MasterData() {
               placeholder="Sort Order"
               value={formData.sort_order || ''}
               onChange={(e) => setFormData({ ...formData, sort_order: e.target.value === '' ? null : parseInt(e.target.value) })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             />
           </>
         );
@@ -320,7 +367,7 @@ export default function MasterData() {
               <select
                 value={formData.city_id || ''}
                 onChange={(e) => handleCityChange(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
                 required
               >
                 <option value="">Select City</option>
@@ -336,7 +383,7 @@ export default function MasterData() {
               <input
                 type="text"
                 value={formData.vendor_code || ''}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
+                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
                 readOnly
                 disabled
               />
@@ -346,7 +393,7 @@ export default function MasterData() {
               placeholder="Name"
               value={formData.name || ''}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <input
@@ -354,34 +401,34 @@ export default function MasterData() {
               placeholder="Mobile"
               value={formData.mobile || ''}
               onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             />
             <input
               type="email"
               placeholder="Email"
               value={formData.email || ''}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             />
             <input
               type="text"
               placeholder="ST Number"
               value={formData.st_number || ''}
               onChange={(e) => setFormData({ ...formData, st_number: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             />
             <input
               type="text"
               placeholder="GSTIN"
               value={formData.gstin || ''}
               onChange={(e) => setFormData({ ...formData, gstin: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             />
             <textarea
               placeholder="Address"
               value={formData.address || ''}
               onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               rows={3}
             />
           </>
@@ -395,7 +442,7 @@ export default function MasterData() {
               placeholder="Floor Code (e.g., GF)"
               value={formData.floor_code || ''}
               onChange={(e) => setFormData({ ...formData, floor_code: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <input
@@ -403,14 +450,14 @@ export default function MasterData() {
               placeholder="Name (e.g., Ground Floor)"
               value={formData.name || ''}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <textarea
               placeholder="Description"
               value={formData.description || ''}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               rows={3}
             />
           </>
@@ -424,25 +471,24 @@ export default function MasterData() {
               placeholder="City Code (e.g., RJ, RM)"
               value={formData.city_code || ''}
               onChange={(e) => setFormData({ ...formData, city_code: e.target.value.toUpperCase() })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
-              maxLength={2}
+              maxLength={3}
             />
             <input
               type="text"
               placeholder="City Name (e.g., Jaipur)"
               value={formData.name || ''}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
               required
             />
             <input
               type="text"
-              placeholder="State (e.g., Rajasthan)"
+              placeholder="State (optional)"
               value={formData.state || ''}
               onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              required
+              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             />
             <label className="flex items-center gap-2">
               <input
@@ -491,19 +537,19 @@ export default function MasterData() {
           </td>
         ) : (
           <>
-            {Object.keys(item).filter(k => k !== 'created_at' && k !== 'updated_at' && k !== 'cities' && k !== 'city_id' && k !== 'floors' && k !== 'floor_id').map((key) => (
+            {Object.keys(item).filter(k => k !== 'id' && k !== 'created_at' && k !== 'updated_at' && k !== 'cities' && k !== 'city_id' && k !== 'floors' && k !== 'floor_id').map((key) => (
               <td key={key} className="p-4 text-sm text-gray-700">
                 {typeof item[key] === 'boolean' ? (item[key] ? 'Yes' : 'No') : item[key]}
               </td>
             ))}
-            {activeTab === 'vendors' && item.cities && (
+            {activeTab === 'vendors' && (
               <td className="p-4 text-sm text-gray-700">
-                {item.cities.name} ({item.cities.city_code})
+                {item.cities ? `${item.cities.name} (${item.cities.city_code})` : '-'}
               </td>
             )}
-            {activeTab === 'productGroups' && item.floors && (
+            {activeTab === 'productGroups' && (
               <td className="p-4 text-sm text-gray-700">
-                {item.floors.name} ({item.floors.floor_code})
+                {item.floors ? `${item.floors.name} (${item.floors.floor_code})` : '-'}
               </td>
             )}
             <td className="p-4">
@@ -537,10 +583,10 @@ export default function MasterData() {
                 setShowAddForm(!showAddForm);
                 setFormData({});
               }}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
+              className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 flex items-center shadow-md"
             >
               {showAddForm ? <X className="w-5 h-5 mr-2" /> : <Plus className="w-5 h-5 mr-2" />}
-              {showAddForm ? 'Cancel' : 'Add New'}
+              {showAddForm ? 'Cancel' : `Add ${tabs.find(t => t.id === activeTab)?.label}`}
             </button>
           )}
         </div>
@@ -576,27 +622,42 @@ export default function MasterData() {
           <>
 
         {showAddForm && (
-          <div className="mb-6 p-6 bg-gray-50 rounded-lg">
-            <h3 className="text-lg font-semibold mb-4">Add New {tabs.find(t => t.id === activeTab)?.label}</h3>
+          <div className="mb-6 bg-white rounded-lg shadow-md p-6 border-2 border-purple-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">
+                Add New {tabs.find(t => t.id === activeTab)?.label}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowAddForm(false);
+                  setFormData({});
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <div className="space-y-3">
               {renderFormFields()}
-              <button
-                onClick={handleAdd}
-                disabled={loading}
-                className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 flex items-center"
-              >
-                {loading ? (
-                  <>
-                    <Loader className="w-5 h-5 mr-2 animate-spin" />
-                    Adding...
-                  </>
-                ) : (
-                  <>
-                    <Plus className="w-5 h-5 mr-2" />
-                    Add
-                  </>
-                )}
-              </button>
+              <div className="flex justify-end">
+                <button
+                  onClick={handleAdd}
+                  disabled={loading}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:bg-gray-400 flex items-center shadow-md"
+                >
+                  {loading ? (
+                    <>
+                      <Loader className="w-5 h-5 mr-2 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-5 h-5 mr-2" />
+                      Add {tabs.find(t => t.id === activeTab)?.label}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -624,7 +685,7 @@ export default function MasterData() {
                 <tr className="bg-gray-100">
                   {data[0] &&
                     Object.keys(data[0])
-                      .filter(k => k !== 'created_at' && k !== 'updated_at' && k !== 'cities' && k !== 'city_id' && k !== 'floors' && k !== 'floor_id')
+                      .filter(k => k !== 'id' && k !== 'created_at' && k !== 'updated_at' && k !== 'cities' && k !== 'city_id' && k !== 'floors' && k !== 'floor_id')
                       .map((key) => (
                         <th key={key} className="p-4 text-left text-sm font-semibold text-gray-700">
                           {key.replace(/_/g, ' ').toUpperCase()}

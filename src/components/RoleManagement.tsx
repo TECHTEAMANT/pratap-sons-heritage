@@ -118,13 +118,14 @@ export default function RoleManagement({ onRolesChanged }: RoleManagementProps =
         setSuccess('Role created successfully!');
       }
 
+      await loadRoles();
       setFormData(initialFormData);
       setShowAddForm(false);
       setEditingId(null);
-      await loadRoles();
       if (onRolesChanged) {
         onRolesChanged();
       }
+      window.dispatchEvent(new Event('roles-changed'));
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
       setError(err.message);
@@ -171,6 +172,7 @@ export default function RoleManagement({ onRolesChanged }: RoleManagementProps =
       if (onRolesChanged) {
         onRolesChanged();
       }
+      window.dispatchEvent(new Event('roles-changed'));
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
       setError(err.message || 'Failed to delete role. It may be in use by existing users.');

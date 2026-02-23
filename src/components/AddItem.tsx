@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Barcode as BarcodeIcon, Save, Loader, Upload, X } from 'lucide-react';
+import VendorAddModal from './VendorAddModal';
 
 export default function AddItem() {
   const [loading, setLoading] = useState(false);
@@ -23,16 +24,19 @@ export default function AddItem() {
     description: '',
     payoutCode: '',
     barcodesPerItem: 1,
+    hsnCode: '',
   });
 
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [showVendorModal, setShowVendorModal] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const hiddenCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const lastAutoFilledHsn = useRef<string>('');
 
   useEffect(() => {
     loadMasterData();
@@ -41,8 +45,19 @@ export default function AddItem() {
   useEffect(() => {
     if (formData.productGroup) {
       const group = masters.productGroups.find(g => g.id === formData.productGroup);
-      if (group?.floor_id) {
-        setFormData(prev => ({ ...prev, floor: group.floor_id }));
+      if (group) {
+        setFormData(prev => {
+          const skipAutoFill = prev.hsnCode && prev.hsnCode !== lastAutoFilledHsn.current;
+          const newHsn = (skipAutoFill ? prev.hsnCode : group.hsn_code) || '';
+          if (!skipAutoFill) {
+            lastAutoFilledHsn.current = group.hsn_code || '';
+          }
+          return { 
+            ...prev, 
+            floor: group.floor_id || prev.floor,
+            hsnCode: newHsn
+          };
+        });
       }
     }
   }, [formData.productGroup, masters.productGroups]);
@@ -178,7 +193,7 @@ export default function AddItem() {
     setSuccess('');
 
     if (!formData.productGroup ||
-        !formData.designNo || !formData.vendor || !formData.floor) {
+        !formData.designNo || !formData.vendor) {
       setError('Please fill in all required fields');
       return;
     }
@@ -200,6 +215,18 @@ export default function AddItem() {
         .eq('auth_user_id', userData?.user?.id)
         .maybeSingle();
 
+      // Check for duplicate design_no + vendor before inserting
+      const { data: existingMaster } = await supabase
+        .from('product_masters')
+        .select('id')
+        .eq('design_no', formData.designNo)
+        .eq('vendor', formData.vendor)
+        .maybeSingle();
+
+      if (existingMaster) {
+        throw new Error('This design number already exists for the selected vendor.');
+      }
+
       const masterData = {
         design_no: formData.designNo,
         product_group: formData.productGroup,
@@ -207,11 +234,12 @@ export default function AddItem() {
         vendor: formData.vendor,
         mrp: mrp,
         gst_logic: formData.gstLogic,
-        floor: formData.floor,
+        floor: formData.floor || null,
         photos: formData.imageUrl ? [formData.imageUrl] : [],
         description: formData.description || '',
         barcodes_per_item: formData.barcodesPerItem,
         payout_code: formData.payoutCode,
+        hsn_code: formData.hsnCode,
         created_by: userRecord?.id || null,
       };
 
@@ -221,7 +249,7 @@ export default function AddItem() {
 
       if (insertError) {
         if (insertError.code === '23505') {
-          throw new Error('This design already exists for the selected vendor and color');
+          throw new Error('This design number already exists for the selected vendor');
         }
         throw insertError;
       }
@@ -239,6 +267,7 @@ export default function AddItem() {
         description: '',
         payoutCode: '',
         barcodesPerItem: 1,
+        hsnCode: '',
       });
     } catch (err: any) {
       console.error('Error adding item:', err);
@@ -318,30 +347,49 @@ export default function AddItem() {
               </label>
               <select
                 value={formData.vendor}
-                onChange={(e) => setFormData({ ...formData, vendor: e.target.value })}
+                onChange={(e) => {
+                  if (e.target.value === 'ADD_NEW') {
+                    setShowVendorModal(true);
+                  } else {
+                    setFormData({ ...formData, vendor: e.target.value });
+                  }
+                }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 required
               >
                 <option value="">Select Vendor</option>
+                <option value="ADD_NEW" className="font-bold text-blue-600">+ Add New Vendor...</option>
                 {masters.vendors.map((vendor) => (
                   <option key={vendor.id} value={vendor.id}>
                     {vendor.name} ({vendor.vendor_code})
                   </option>
                 ))}
               </select>
+
+              <VendorAddModal
+                isOpen={showVendorModal}
+                onClose={() => setShowVendorModal(false)}
+                onSuccess={(newVendor) => {
+                  setMasters(prev => ({
+                    ...prev,
+                    vendors: [...prev.vendors, newVendor].sort((a, b) => a.name.localeCompare(b.name))
+                  }));
+                  setFormData(prev => ({ ...prev, vendor: newVendor.id }));
+                  setShowVendorModal(false);
+                }}
+              />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Floor <span className="text-red-500">*</span>
+                Floor
               </label>
               <select
                 value={formData.floor}
                 onChange={(e) => setFormData({ ...formData, floor: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                required
               >
-                <option value="">Select Floor</option>
+                <option value="">Select Floor (Optional)</option>
                 {masters.floors.map((floor) => (
                   <option key={floor.id} value={floor.id}>
                     {floor.name} ({floor.floor_code})
@@ -408,6 +456,20 @@ export default function AddItem() {
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               placeholder="Enter Payout Code"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              HSN Code
+            </label>
+            <input
+              type="text"
+              value={formData.hsnCode}
+              onChange={(e) => setFormData({ ...formData, hsnCode: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              placeholder="Auto-filled from Product Group"
+            />
+            <p className="text-xs text-gray-500 mt-1">Populated from product group, but can be manually changed if needed</p>
           </div>
 
           <div>
