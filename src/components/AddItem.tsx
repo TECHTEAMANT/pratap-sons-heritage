@@ -13,6 +13,8 @@ export default function AddItem() {
     floors: [] as any[],
   });
 
+  const MAX_PHOTOS = 3;
+
   const [formData, setFormData] = useState({
     productGroup: '',
     color: '',
@@ -20,7 +22,7 @@ export default function AddItem() {
     vendor: '',
     floor: '',
     gstLogic: 'AUTO_5_18',
-    imageUrl: '',
+    imageUrls: [] as string[],
     description: '',
     payoutCode: '',
     barcodesPerItem: 1,
@@ -99,13 +101,18 @@ export default function AddItem() {
       return;
     }
 
+    if (formData.imageUrls.length >= MAX_PHOTOS) {
+      setError(`You can add up to ${MAX_PHOTOS} photos only`);
+      return;
+    }
+
     setUploading(true);
     setError('');
 
     try {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setFormData({ ...formData, imageUrl: reader.result as string });
+        setFormData(prev => ({ ...prev, imageUrls: [...prev.imageUrls, reader.result as string] }));
         setUploading(false);
       };
       reader.onerror = () => {
@@ -113,6 +120,8 @@ export default function AddItem() {
         setUploading(false);
       };
       reader.readAsDataURL(file);
+      // Reset so same file can be re-selected
+      e.target.value = '';
     } catch (err) {
       console.error('Error uploading image:', err);
       setError('Failed to upload image');
@@ -148,6 +157,11 @@ export default function AddItem() {
   const capturePhoto = () => {
     const video = videoRef.current;
     if (!video) return;
+    if (formData.imageUrls.length >= MAX_PHOTOS) {
+      setError(`You can add up to ${MAX_PHOTOS} photos only`);
+      closeCamera();
+      return;
+    }
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
@@ -155,17 +169,14 @@ export default function AddItem() {
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-      setFormData(prev => ({ ...prev, imageUrl: dataUrl }));
+      setFormData(prev => ({ ...prev, imageUrls: [...prev.imageUrls, dataUrl] }));
     }
     closeCamera();
   };
 
-  const clearImage = () => {
-    setFormData(prev => ({ ...prev, imageUrl: '' }));
+  const removeImage = (idx: number) => {
+    setFormData(prev => ({ ...prev, imageUrls: prev.imageUrls.filter((_, i) => i !== idx) }));
     setError('');
-    if (hiddenCameraInputRef.current) {
-      hiddenCameraInputRef.current.value = '';
-    }
   };
 
   useEffect(() => {
@@ -197,8 +208,8 @@ export default function AddItem() {
       setError('Please fill in all required fields');
       return;
     }
-    if (!formData.imageUrl) {
-      setError('Product image is required');
+    if (formData.imageUrls.length === 0) {
+      setError('At least one product photo is required');
       return;
     }
 
@@ -235,7 +246,7 @@ export default function AddItem() {
         mrp: mrp,
         gst_logic: formData.gstLogic,
         floor: formData.floor || null,
-        photos: formData.imageUrl ? [formData.imageUrl] : [],
+        photos: formData.imageUrls,
         description: formData.description || '',
         barcodes_per_item: formData.barcodesPerItem,
         payout_code: formData.payoutCode,
@@ -263,7 +274,7 @@ export default function AddItem() {
         vendor: formData.vendor,
         floor: formData.floor,
         gstLogic: 'AUTO_5_18',
-        imageUrl: '',
+        imageUrls: [],
         description: '',
         payoutCode: '',
         barcodesPerItem: 1,
@@ -474,83 +485,86 @@ export default function AddItem() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Product Image <span className="text-red-500">*</span>
+              Product Photos <span className="text-red-500">*</span>
+              <span className="text-gray-400 font-normal ml-1">({formData.imageUrls.length}/{MAX_PHOTOS})</span>
             </label>
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={formData.imageUrl ? 'Image uploaded' : ''}
-                  readOnly
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg bg-gray-50"
-                  placeholder="No image selected"
-                />
-                <label className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer flex items-center disabled:opacity-50">
-                  {uploading ? (
-                    <>
+            <div className="space-y-3">
+              {/* Thumbnails of added photos */}
+              {formData.imageUrls.length > 0 && (
+                <div className="flex flex-wrap gap-3">
+                  {formData.imageUrls.map((url, idx) => (
+                    <div key={idx} className="relative w-28 h-28 border border-gray-300 rounded-lg overflow-hidden flex-shrink-0">
+                      <img
+                        src={url}
+                        alt={`Product photo ${idx + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeImage(idx)}
+                        title="Remove photo"
+                        className="absolute top-1 right-1 p-1 bg-white/80 rounded-full shadow hover:bg-white"
+                      >
+                        <X className="w-4 h-4 text-gray-700" />
+                      </button>
+                      <span className="absolute bottom-1 left-1 bg-black/50 text-white text-xs px-1.5 py-0.5 rounded">{idx + 1}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add photo controls — hidden when limit reached */}
+              {formData.imageUrls.length < MAX_PHOTOS && (
+                <div className="flex gap-2">
+                  <label className={`px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer flex items-center ${uploading ? 'opacity-70 pointer-events-none' : ''}`}>
+                    {uploading ? (
                       <Loader className="w-5 h-5 animate-spin" />
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-5 h-5 mr-2" />
-                      Upload
-                    </>
-                  )}
+                    ) : (
+                      <>
+                        <Upload className="w-5 h-5 mr-2" />
+                        Upload Photo
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                      disabled={uploading}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={openCamera}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center disabled:opacity-50"
+                    disabled={uploading}
+                  >
+                    {uploading ? (
+                      <Loader className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        <Upload className="w-5 h-5 mr-2" />
+                        Take Photo
+                      </>
+                    )}
+                  </button>
                   <input
+                    ref={hiddenCameraInputRef}
                     type="file"
                     accept="image/*"
+                    capture="environment"
                     onChange={handleImageUpload}
                     className="hidden"
                     disabled={uploading}
                   />
-                </label>
-                <button
-                  type="button"
-                  onClick={openCamera}
-                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center disabled:opacity-50"
-                  disabled={uploading}
-                >
-                  {uploading ? (
-                    <Loader className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <>
-                      <Upload className="w-5 h-5 mr-2" />
-                      Take Photo
-                    </>
-                  )}
-                </button>
-                <input
-                  ref={hiddenCameraInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                  disabled={uploading}
-                />
-              </div>
-              {formData.imageUrl && (
-                <div className="relative w-32 h-32 border border-gray-300 rounded-lg overflow-hidden">
-                  <img
-                    src={formData.imageUrl}
-                    alt="Product preview"
-                    className="w-full h-full object-cover"
-                  />
-                  <button
-                    type="button"
-                    onClick={clearImage}
-                    title="Remove image"
-                    className="absolute top-1 right-1 p-1 bg-white/80 rounded-full shadow hover:bg-white"
-                  >
-                    <X className="w-4 h-4 text-gray-700" />
-                  </button>
                 </div>
               )}
+
               {cameraError && (
                 <div className="text-red-600 text-sm">{cameraError}</div>
               )}
             </div>
-            <p className="text-xs text-gray-500 mt-1">Required: Upload or capture a product image (max 5MB)</p>
+            <p className="text-xs text-gray-500 mt-1">Required: at least 1 photo. Up to {MAX_PHOTOS} photos, max 5MB each.</p>
           </div>
 
           {error && (

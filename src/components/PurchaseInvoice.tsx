@@ -73,6 +73,11 @@ export default function PurchaseInvoice() {
   const [gstDifferenceReason, setGstDifferenceReason] = useState('');
   const [gstType, setGstType] = useState<GSTTransactionType>('CGST_SGST');
 
+  // Other Ledger
+  const [ledgerDiscount, setLedgerDiscount] = useState('');
+  const [ledgerFreight, setLedgerFreight] = useState('');
+  const [ledgerFreightGstRate, setLedgerFreightGstRate] = useState<5 | 18>(5);
+
   const [invoiceAttachment, setInvoiceAttachment] = useState('');
   const [invoiceFileName, setInvoiceFileName] = useState('');
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
@@ -210,6 +215,10 @@ export default function PurchaseInvoice() {
     if (invoice.gst_type) {
       setGstType(invoice.gst_type as GSTTransactionType);
     }
+
+    setLedgerDiscount(invoice.ledger_discount != null ? String(invoice.ledger_discount) : '');
+    setLedgerFreight(invoice.ledger_freight != null ? String(invoice.ledger_freight) : '');
+    setLedgerFreightGstRate((invoice.ledger_freight_gst_rate === 18 ? 18 : 5) as 5 | 18);
 
     setInvoiceAttachment(invoice.vendor_invoice_attachment || '');
     setGstDifferenceReason(invoice.gst_difference_reason || '');
@@ -392,24 +401,32 @@ export default function PurchaseInvoice() {
 
   useEffect(() => {
     const total = calculateTotal();
-    const totalStr = total > 0 ? total.toFixed(2) : '';
+    const discount = parseFloat(ledgerDiscount) || 0;
+    // Taxable value = items total minus discount only. Freight is taxed separately.
+    const adjusted = total - discount;
+    const totalStr = adjusted > 0 ? adjusted.toFixed(2) : (total > 0 ? '0.00' : '');
     setTaxableValue(totalStr);
-  }, [items]);
+  }, [items, ledgerDiscount]);
 
   useEffect(() => {
+    const freightAmt = parseFloat(ledgerFreight) || 0;
+    const freightGst = freightAmt > 0 ? (freightAmt * ledgerFreightGstRate) / 100 : 0;
     if (taxableValue && parseFloat(taxableValue) > 0) {
-      const gst = calculateGSTFromTaxable(parseFloat(taxableValue));
-      setCalculatedGST(gst);
+      const itemsGst = calculateGSTFromTaxable(parseFloat(taxableValue));
+      const totalGst = itemsGst + freightGst;
+      setCalculatedGST(totalGst);
       if (!manualGST) {
-        setManualGST(gst.toFixed(2));
+        setManualGST(totalGst.toFixed(2));
       }
     } else {
-      setCalculatedGST(0);
-      if (!items.length) {
+      setCalculatedGST(freightGst);
+      if (!items.length && !freightAmt) {
         setManualGST('');
+      } else if (freightGst > 0 && !manualGST) {
+        setManualGST(freightGst.toFixed(2));
       }
     }
-  }, [taxableValue, items.length]);
+  }, [taxableValue, items.length, ledgerFreight, ledgerFreightGstRate]);
 
   const handleItemFieldChange = (field: string, value: any) => {
     setCurrentItem((prev: any) => {
@@ -558,10 +575,15 @@ export default function PurchaseInvoice() {
   };
 
   const calculateGSTFromTaxable = (taxableAmount: number): number => {
+    // taxableAmount = items_total - discount
+    // Proportion each item's share of the raw items total onto the discounted taxable amount
+    const rawItemsTotal = calculateTotal();
+    if (rawItemsTotal <= 0 || taxableAmount <= 0) return 0;
     let totalGST = 0;
     items.forEach(item => {
       const itemTotal = item.cost_per_item * getTotalQuantity(item);
-      const itemTaxable = (itemTotal / taxableAmount) * taxableAmount;
+      // Each item contributes proportionally to the discounted taxable amount
+      const itemTaxable = (itemTotal / rawItemsTotal) * taxableAmount;
 
       if (item.gst_logic === 'AUTO_5_18') {
         const gstRate = item.mrp < 2500 ? 5 : 18;
@@ -1159,9 +1181,12 @@ export default function PurchaseInvoice() {
 
       const poNumber = `PI${new Date().getFullYear()}${String((count || 0) + 1).padStart(6, '0')}`;
 
-      const totalAmount = calculateTotal();
+      const itemsTotal = calculateTotal();
+      const discountAmt = parseFloat(ledgerDiscount) || 0;
+      const freightAmt = parseFloat(ledgerFreight) || 0;
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
       const finalGST = parseFloat(manualGST || '0');
+      const grandTotal = itemsTotal - discountAmt + freightAmt + finalGST;
 
       const { data: po, error: poError } = await supabase
         .from('purchase_orders')
@@ -1171,10 +1196,13 @@ export default function PurchaseInvoice() {
           order_date: orderDate,
           invoice_number: vendorInvoiceNumber,
           total_items: totalItems,
-          total_amount: totalAmount + finalGST,
+          total_amount: grandTotal,
           status: 'Pending',
           notes: notes,
           taxable_value: parseFloat(taxableValue),
+          ledger_discount: discountAmt > 0 ? discountAmt : null,
+          ledger_freight: freightAmt > 0 ? freightAmt : null,
+          ledger_freight_gst_rate: freightAmt > 0 ? ledgerFreightGstRate : null,
           manual_gst_amount: finalGST !== calculatedGST ? finalGST : null,
           vendor_invoice_attachment: invoiceAttachment || null,
           gst_difference_reason: finalGST !== calculatedGST ? gstDifferenceReason : null,
@@ -1429,6 +1457,9 @@ export default function PurchaseInvoice() {
       setManualGST('');
       setVendorInvoiceNumber('');
       setInvoiceAttachment('');
+      setLedgerDiscount('');
+      setLedgerFreight('');
+      setLedgerFreightGstRate(5);
 
       setTimeout(() => setSuccess(''), 5000);
     } catch (err: any) {
@@ -1486,9 +1517,12 @@ export default function PurchaseInvoice() {
         throw new Error('Purchase invoice not found');
       }
 
-      const totalAmount = calculateTotal();
+      const itemsTotal = calculateTotal();
+      const discountAmt = parseFloat(ledgerDiscount) || 0;
+      const freightAmt = parseFloat(ledgerFreight) || 0;
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
       const finalGST = parseFloat(manualGST || '0');
+      const grandTotal = itemsTotal - discountAmt + freightAmt + finalGST;
 
       const { error: poUpdateError } = await supabase
         .from('purchase_orders')
@@ -1497,10 +1531,13 @@ export default function PurchaseInvoice() {
           order_date: orderDate,
           invoice_number: vendorInvoiceNumber,
           total_items: totalItems,
-          total_amount: totalAmount + finalGST,
+          total_amount: grandTotal,
           status: 'Completed',
           notes: notes,
           taxable_value: parseFloat(taxableValue),
+          ledger_discount: discountAmt > 0 ? discountAmt : null,
+          ledger_freight: freightAmt > 0 ? freightAmt : null,
+          ledger_freight_gst_rate: freightAmt > 0 ? ledgerFreightGstRate : null,
           manual_gst_amount: finalGST !== calculatedGST ? finalGST : null,
           vendor_invoice_attachment: invoiceAttachment || null,
           gst_difference_reason: finalGST !== calculatedGST ? gstDifferenceReason : null,
@@ -2614,6 +2651,85 @@ export default function PurchaseInvoice() {
           )}
         </div>
 
+        {/* Other Ledger Section */}
+        {items.length > 0 && (
+          <div className="border-t-2 border-gray-200 pt-6 mb-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-1">Other Ledger</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Discount reduces the taxable value. Freight is taxed at the selected GST rate and added separately.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Discount */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Discount (–)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">₹</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={ledgerDiscount}
+                    onChange={(e) => {
+                      setLedgerDiscount(e.target.value);
+                      setManualGST('');
+                    }}
+                    className="w-full pl-8 pr-4 py-2 border-2 border-red-200 rounded-lg focus:ring-2 focus:ring-red-400 focus:border-red-400 bg-red-50"
+                    placeholder="0.00"
+                  />
+                </div>
+                {parseFloat(ledgerDiscount) > 0 && (
+                  <p className="text-xs text-red-600 mt-1 font-medium">– ₹{parseFloat(ledgerDiscount).toFixed(2)} deducted from taxable value</p>
+                )}
+              </div>
+
+              {/* Freight */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Freight / Charges (+)
+                </label>
+                <div className="flex gap-2">
+                  {/* GST Rate Dropdown */}
+                  <select
+                    value={ledgerFreightGstRate}
+                    onChange={(e) => {
+                      setLedgerFreightGstRate(parseInt(e.target.value) as 5 | 18);
+                      setManualGST('');
+                    }}
+                    className="w-36 px-3 py-2 border-2 border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-400 bg-blue-50 font-semibold text-blue-800"
+                  >
+                    <option value={5}>Freight 5%</option>
+                    <option value={18}>Freight 18%</option>
+                  </select>
+                  {/* Amount */}
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">₹</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={ledgerFreight}
+                      onChange={(e) => {
+                        setLedgerFreight(e.target.value);
+                        setManualGST('');
+                      }}
+                      className="w-full pl-8 pr-4 py-2 border-2 border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 bg-blue-50"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+                {parseFloat(ledgerFreight) > 0 && (
+                  <p className="text-xs text-blue-700 mt-1 font-medium">
+                    ₹{parseFloat(ledgerFreight).toFixed(2)} freight + {ledgerFreightGstRate}% GST
+                    = <span className="font-bold">₹{((parseFloat(ledgerFreight) || 0) * ledgerFreightGstRate / 100).toFixed(2)}</span> freight GST
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="border-t-2 border-gray-200 pt-6 mb-6">
           <h3 className="text-xl font-bold text-gray-800 mb-4">GST Calculation</h3>
 
@@ -2705,17 +2821,56 @@ export default function PurchaseInvoice() {
             <span className="text-emerald-700">{items.reduce((sum, item) => sum + getTotalQuantity(item), 0)}</span>
           </div>
           <div className="flex justify-between text-lg font-semibold text-gray-700 mt-2">
-            <span>Subtotal:</span>
+            <span>Subtotal (Items):</span>
             <span className="text-emerald-700">₹{calculateTotal().toFixed(2)}</span>
           </div>
-          <div className="flex justify-between text-lg font-semibold text-gray-700 mt-2">
-            <span>GST:</span>
+          {parseFloat(ledgerDiscount) > 0 && (
+            <div className="flex justify-between text-base font-semibold text-red-600 mt-2">
+              <span>Discount (–):</span>
+              <span>– ₹{parseFloat(ledgerDiscount).toFixed(2)}</span>
+            </div>
+          )}
+          {(parseFloat(ledgerDiscount) > 0) && (
+            <div className="flex justify-between text-sm font-semibold text-gray-600 mt-1 border-t border-emerald-100 pt-1">
+              <span>Taxable Value (Items − Discount):</span>
+              <span className="text-emerald-700">₹{taxableValue || '0.00'}</span>
+            </div>
+          )}
+          {parseFloat(ledgerFreight) > 0 && (
+            <>
+              <div className="flex justify-between text-base font-semibold text-blue-600 mt-2">
+                <span>Freight (+):</span>
+                <span>+ ₹{parseFloat(ledgerFreight).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-sm font-medium text-blue-500 mt-0.5">
+                <span>Freight GST ({ledgerFreightGstRate}%):</span>
+                <span>+ ₹{((parseFloat(ledgerFreight) || 0) * ledgerFreightGstRate / 100).toFixed(2)}</span>
+              </div>
+            </>
+          )}
+          <div className="flex justify-between text-lg font-semibold text-gray-700 mt-2 border-t border-emerald-200 pt-2">
+            <span>Total GST:</span>
             <span className="text-emerald-700">₹{parseFloat(manualGST || '0').toFixed(2)}</span>
           </div>
-          <div className="flex justify-between text-2xl font-bold text-emerald-700 border-t-2 border-emerald-300 mt-3 pt-3">
-            <span>Grand Total:</span>
-            <span>₹{(calculateTotal() + parseFloat(manualGST || '0')).toFixed(2)}</span>
-          </div>
+          {(() => {
+            const exact = calculateTotal() - (parseFloat(ledgerDiscount) || 0) + (parseFloat(ledgerFreight) || 0) + parseFloat(manualGST || '0');
+            const rounded = Math.round(exact);
+            const roundOff = rounded - exact;
+            return (
+              <>
+                {Math.abs(roundOff) >= 0.01 && (
+                  <div className="flex justify-between text-sm font-medium text-gray-500 mt-2">
+                    <span>Round Off:</span>
+                    <span>{roundOff >= 0 ? '+' : ''}{roundOff.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-2xl font-bold text-emerald-700 border-t-2 border-emerald-300 mt-3 pt-3">
+                  <span>Grand Total:</span>
+                  <span>₹{rounded.toLocaleString('en-IN')}</span>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {error && (
