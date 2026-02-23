@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Package, Search, Image as ImageIcon, RefreshCw, Edit2, X, Save } from 'lucide-react';
+import { Package, Search, Image as ImageIcon, RefreshCw, Edit2, X, Save, Upload, Loader } from 'lucide-react';
 
 interface GroupedItem {
   design_no: string;
@@ -33,6 +33,7 @@ interface GroupedItem {
   gst_logic: string;
   mrp_markup_percent: number;
   hsn_code: string;
+  from_product_master?: boolean;
 }
 
 export default function Inventory() {
@@ -45,6 +46,11 @@ export default function Inventory() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
+  const [editCameraOpen, setEditCameraOpen] = useState(false);
+  const editVideoRef = useRef<HTMLVideoElement | null>(null);
+  const editStreamRef = useRef<MediaStream | null>(null);
+  const editCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     loadInventory();
@@ -54,7 +60,7 @@ export default function Inventory() {
     setLoading(true);
 
     try {
-      const [batchesRes, defectiveRes, floorsRes] = await Promise.all([
+      const [batchesRes, defectiveRes, floorsRes, mastersRes] = await Promise.all([
         supabase
           .from('barcode_batches')
           .select(`
@@ -73,14 +79,61 @@ export default function Inventory() {
         supabase
           .from('floors')
           .select('*')
-          .eq('active', true)
+          .eq('active', true),
+        supabase
+          .from('product_masters')
+          .select(`
+            *,
+            product_group:product_groups(id, name, group_code),
+            color:colors(id, name, color_code),
+            vendor:vendors(id, name, vendor_code),
+            floor:floors(id, name, floor_code)
+          `)
+          .order('created_at', { ascending: false }),
       ]);
 
       if (batchesRes.error) throw batchesRes.error;
 
       setFloors(floorsRes.data || []);
       const grouped = groupItemsByDesignVendor(batchesRes.data || [], defectiveRes.data || []);
-      setGroupedItems(grouped);
+
+      // Build a set of design+vendor keys already covered by barcode_batches
+      const batchKeys = new Set(
+        (batchesRes.data || []).map((b: any) => `${b.design_no}||${b.vendor}`)
+      );
+
+      // Merge product_masters that have no matching barcode batch as 0-stock items
+      const masterItems: GroupedItem[] = (mastersRes.data || []).reduce((acc: GroupedItem[], pm: any) => {
+        const key = `${pm.design_no}||${pm.vendor?.id || pm.vendor}`;
+        if (!batchKeys.has(key)) {
+          acc.push({
+            design_no: pm.design_no,
+            vendor_name: pm.vendor?.name || 'Unknown',
+            vendor_code: pm.vendor?.vendor_code || '',
+            vendor_id: pm.vendor?.id || '',
+            product_group_name: pm.product_group?.name || '',
+            product_group_id: pm.product_group?.id || '',
+            color_name: pm.color?.name || '',
+            color_id: pm.color?.id || '',
+            description: pm.description || '',
+            images: pm.photos || [],
+            sizes: [],
+            total_available: 0,
+            total_quantity: 0,
+            total_defective: 0,
+            mrp: pm.mrp || 0,
+            cost: 0,
+            order_number: null,
+            gst_logic: pm.gst_logic || 'AUTO_5_18',
+            mrp_markup_percent: pm.mrp_markup_percent || 100,
+            hsn_code: pm.hsn_code || '',
+            from_product_master: true,
+          });
+        }
+        return acc;
+      }, []);
+
+      setGroupedItems([...grouped, ...masterItems]);
     } catch (error) {
       console.error('Error loading inventory:', error);
     } finally {
@@ -163,7 +216,78 @@ export default function Inventory() {
     setEditingItem(item);
     setError('');
     setSuccess('');
+    setEditCameraOpen(false);
+    if (editStreamRef.current) {
+      editStreamRef.current.getTracks().forEach(t => t.stop());
+      editStreamRef.current = null;
+    }
   };
+
+  const handleEditImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingItem) return;
+    if (!file.type.startsWith('image/')) { setError('Please select an image file'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('Image size should be less than 5MB'); return; }
+    setImageUploading(true);
+    setError('');
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setEditingItem(prev => prev ? { ...prev, images: [reader.result as string] } : null);
+      setImageUploading(false);
+    };
+    reader.onerror = () => { setError('Failed to read image file'); setImageUploading(false); };
+    reader.readAsDataURL(file);
+  };
+
+  const openEditCamera = async () => {
+    setError('');
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera not supported');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      editStreamRef.current = stream;
+      setEditCameraOpen(true);
+    } catch {
+      editCameraInputRef.current?.click();
+    }
+  };
+
+  const closeEditCamera = () => {
+    if (editStreamRef.current) {
+      editStreamRef.current.getTracks().forEach(t => t.stop());
+      editStreamRef.current = null;
+    }
+    setEditCameraOpen(false);
+  };
+
+  const captureEditPhoto = () => {
+    const video = editVideoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      setEditingItem(prev => prev ? { ...prev, images: [dataUrl] } : null);
+    }
+    closeEditCamera();
+  };
+
+  useEffect(() => {
+    if (editCameraOpen && editStreamRef.current && editVideoRef.current) {
+      editVideoRef.current.srcObject = editStreamRef.current;
+      editVideoRef.current.play().catch(() => {});
+    }
+  }, [editCameraOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (editStreamRef.current) {
+        editStreamRef.current.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, []);
 
   const handleSaveEdit = async () => {
     if (!editingItem) return;
@@ -179,6 +303,8 @@ export default function Inventory() {
         .eq('auth_user_id', userData?.user?.id)
         .maybeSingle();
 
+      const newPhotos = editingItem.images && editingItem.images.length > 0 ? editingItem.images : [];
+
       for (const size of editingItem.sizes) {
         await supabase
           .from('barcode_batches')
@@ -190,11 +316,21 @@ export default function Inventory() {
             gst_logic: editingItem.gst_logic,
             description: editingItem.description,
             hsn_code: editingItem.hsn_code,
+            photos: newPhotos,
             floor: size.floor_id || null,
             modified_by: userRecord?.id || null,
             updated_at: new Date().toISOString(),
           })
           .eq('id', size.batch_id);
+      }
+
+      // Also update product_masters photos if a matching master exists
+      if (editingItem.design_no && editingItem.vendor_id) {
+        await supabase
+          .from('product_masters')
+          .update({ photos: newPhotos, updated_at: new Date().toISOString() })
+          .eq('design_no', editingItem.design_no)
+          .eq('vendor', editingItem.vendor_id);
       }
 
       setSuccess('Inventory updated successfully!');
@@ -314,7 +450,9 @@ export default function Inventory() {
               <div
                 key={`${item.design_no}-${item.vendor_code}-${idx}`}
                 className={`border-2 rounded-lg p-4 hover:shadow-lg transition ${
-                  item.total_defective > 0
+                  item.from_product_master
+                    ? 'border-blue-200 bg-blue-50 hover:border-blue-400'
+                    : item.total_defective > 0
                     ? 'border-red-400 bg-red-50 hover:border-red-500'
                     : 'border-gray-200 hover:border-emerald-300'
                 }`}
@@ -343,7 +481,14 @@ export default function Inventory() {
                   <div className="flex-1">
                     <div className="flex items-start justify-between mb-3">
                       <div>
-                        <h3 className="text-xl font-bold text-gray-800">{item.design_no}</h3>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-xl font-bold text-gray-800">{item.design_no}</h3>
+                          {item.from_product_master && (
+                            <span className="text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-300 px-2 py-0.5 rounded-full">
+                              No Stock Received
+                            </span>
+                          )}
+                        </div>
                         <p className="text-sm text-gray-600 font-medium">
                           {item.product_group_name} • {item.color_name} • HSN: {item.hsn_code}
                         </p>
@@ -406,6 +551,11 @@ export default function Inventory() {
 
                     <div>
                       <p className="text-xs font-medium text-gray-600 mb-2">Size Breakdown (Available/Total) • 8-Digit Code</p>
+                      {item.from_product_master && item.sizes.length === 0 && (
+                        <p className="text-xs text-blue-600 italic">
+                          This product has been registered but no stock has been received yet. Add stock via Purchase Invoice.
+                        </p>
+                      )}
                       <div className="flex flex-wrap gap-2">
                         {item.sizes.map((size: any, sizeIdx: number) => (
                           <div
@@ -592,6 +742,98 @@ export default function Inventory() {
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg bg-gray-100"
                   />
                 </div>
+              </div>
+
+              {/* Product Image */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Product Image</label>
+                <div className="flex gap-3 items-start flex-wrap">
+                  {/* Current image preview */}
+                  <div className="relative w-32 h-32 border-2 border-gray-300 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100 flex-shrink-0">
+                    {editingItem.images && editingItem.images.length > 0 ? (
+                      <>
+                        <img
+                          src={editingItem.images[0]}
+                          alt="Product"
+                          className="w-full h-full object-cover"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setEditingItem({ ...editingItem, images: [] })}
+                          className="absolute top-1 right-1 p-1 bg-white/80 rounded-full shadow hover:bg-white"
+                          title="Remove image"
+                        >
+                          <X className="w-4 h-4 text-gray-700" />
+                        </button>
+                      </>
+                    ) : (
+                      <ImageIcon className="w-12 h-12 text-gray-300" />
+                    )}
+                  </div>
+
+                  {/* Upload & camera buttons */}
+                  <div className="flex flex-col gap-2">
+                    <label className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer flex items-center text-sm">
+                      {imageUploading ? (
+                        <Loader className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Upload className="w-4 h-4 mr-2" />
+                      )}
+                      Upload Image
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleEditImageUpload}
+                        className="hidden"
+                        disabled={imageUploading}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={openEditCamera}
+                      disabled={imageUploading}
+                      className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center text-sm disabled:opacity-50"
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      Take Photo
+                    </button>
+                    <input
+                      ref={editCameraInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleEditImageUpload}
+                      className="hidden"
+                    />
+                    <p className="text-xs text-gray-500">Max 5MB. Replaces current image.</p>
+                  </div>
+                </div>
+
+                {/* Inline camera preview */}
+                {editCameraOpen && (
+                  <div className="mt-3 border-2 border-emerald-400 rounded-lg overflow-hidden bg-black">
+                    <div className="aspect-video">
+                      <video ref={editVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                    </div>
+                    <div className="flex gap-3 justify-center p-3 bg-gray-900">
+                      <button
+                        type="button"
+                        onClick={captureEditPhoto}
+                        className="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 text-sm"
+                      >
+                        Capture
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeEditCamera}
+                        className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mb-6">
