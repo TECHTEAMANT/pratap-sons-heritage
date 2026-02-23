@@ -794,7 +794,17 @@ export default function PurchaseOrders() {
                         <Label className="mb-2 block">Product Group</Label>
                         <select
                           value={currentItem.product_group}
-                          onChange={(e) => setCurrentItem({ ...currentItem, product_group: e.target.value })}
+                          onChange={(e) => {
+                            const selectedPg = productGroups.find(pg => pg.id === e.target.value);
+                            setCurrentItem({
+                              ...currentItem,
+                              product_group: e.target.value,
+                              // Auto-populate description from product group name
+                              description: currentItem.description || selectedPg?.name || '',
+                              // Auto-populate HSN code if not already set
+                              hsn_code: currentItem.hsn_code || selectedPg?.hsn_code || '',
+                            });
+                          }}
                           className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                           disabled={itemMode === 'existing'}
                         >

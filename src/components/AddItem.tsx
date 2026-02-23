@@ -193,7 +193,7 @@ export default function AddItem() {
     setSuccess('');
 
     if (!formData.productGroup ||
-        !formData.designNo || !formData.vendor || !formData.floor) {
+        !formData.designNo || !formData.vendor) {
       setError('Please fill in all required fields');
       return;
     }
@@ -234,7 +234,7 @@ export default function AddItem() {
         vendor: formData.vendor,
         mrp: mrp,
         gst_logic: formData.gstLogic,
-        floor: formData.floor,
+        floor: formData.floor || null,
         photos: formData.imageUrl ? [formData.imageUrl] : [],
         description: formData.description || '',
         barcodes_per_item: formData.barcodesPerItem,
@@ -382,15 +382,14 @@ export default function AddItem() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Floor <span className="text-red-500">*</span>
+                Floor
               </label>
               <select
                 value={formData.floor}
                 onChange={(e) => setFormData({ ...formData, floor: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                required
               >
-                <option value="">Select Floor</option>
+                <option value="">Select Floor (Optional)</option>
                 {masters.floors.map((floor) => (
                   <option key={floor.id} value={floor.id}>
                     {floor.name} ({floor.floor_code})

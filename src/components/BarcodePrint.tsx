@@ -101,23 +101,42 @@ export default function BarcodePrint() {
 
       if (poError) throw poError;
 
-      const { data: batches, error: batchError } = await supabase
-        .from('barcode_batches')
-        .select(`
-          *,
-          product_group:product_groups(name, group_code, hsn_code),
-          color:colors(name, color_code),
-          size:sizes(name, size_code)
-        `)
-        .eq('po_id', poId);
+      // Fetch batches and purchase_items in parallel
+      const [batchRes, piRes] = await Promise.all([
+        supabase
+          .from('barcode_batches')
+          .select(`
+            *,
+            product_group:product_groups(name, group_code, hsn_code),
+            color:colors(name, color_code),
+            size:sizes(name, size_code)
+          `)
+          .eq('po_id', poId),
+        supabase
+          .from('purchase_items')
+          .select('design_no, size, order_number')
+          .eq('po_id', poId),
+      ]);
 
-      if (batchError) throw batchError;
+      if (batchRes.error) throw batchRes.error;
 
+      // Build a lookup: design_no -> order_number
+      // (all size variants of a design in the same invoice share the same order_number)
+      const orderLookup: Record<string, string> = {};
+      (piRes.data || []).forEach((pi: any) => {
+        if (pi.order_number && !orderLookup[pi.design_no]) {
+          orderLookup[pi.design_no] = pi.order_number;
+        }
+      });
+
+      const batches = batchRes.data || [];
       const itemsWithQuantity: any[] = [];
-      batches?.forEach((batch: any) => {
+      batches.forEach((batch: any) => {
         const qty = batch.print_quantity !== null && batch.print_quantity !== undefined 
           ? batch.print_quantity 
           : (batch.total_quantity || 0);
+        // Get order_number from purchase_items lookup, fallback to URL param
+        const batchOrderNumber = orderLookup[batch.design_no] || orderNumber;
         for (let i = 0; i < qty; i++) {
           itemsWithQuantity.push({
             ...batch,
@@ -129,7 +148,7 @@ export default function BarcodePrint() {
             vendor: po.vendors,
             po_id: poId,
             invoice_number: invoiceNumber,
-            order_number: orderNumber,
+            order_number: batchOrderNumber,
           });
         }
       });
@@ -480,7 +499,8 @@ export default function BarcodePrint() {
       const groupCode = item.product_group?.group_code || '';
       const colorCode = item.color?.color_code || '';
       const vendorCode = item.vendor?.vendor_code || item.vendor_code || '';
-      const secondLine = [groupCode, design, colorCode, vendorCode, encodedCost].filter(Boolean).join('-');
+      const orderNo = item.order_number || '';
+      const secondLine = [groupCode, design, colorCode, vendorCode, encodedCost, orderNo].filter(Boolean).join('-');
 
       const barcodeDataURL = generateBarcodeDataURL(item.barcode_id, {
         width: size.barcodeWidth,
@@ -816,7 +836,8 @@ export default function BarcodePrint() {
                     const groupCode = item.product_group?.group_code || '';
                     const colorCode = item.color?.color_code || '';
                     const vendorCode = item.vendor?.vendor_code || item.vendor_code || '';
-                    const secondLine = [groupCode, design, colorCode, vendorCode, encodedCost].filter(Boolean).join('-');
+                    const orderNo = item.order_number || '';
+                    const secondLine = [groupCode, design, colorCode, vendorCode, encodedCost, orderNo].filter(Boolean).join('-');
 
                     const topLine = item.product_group?.name || '';
 
