@@ -64,7 +64,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (mobile: string, password: string) => {
     try {
-      const loginEmail = `${mobile}@login.local`;
+      // Use RPC to look up the stored email by mobile number
+      // (RPC uses SECURITY DEFINER so it works before user is authenticated)
+      const { data: emailResult } = await supabase
+        .rpc('get_email_by_mobile', { p_mobile: mobile });
+
+      let loginEmail: string;
+      if (!emailResult) {
+        // Fallback: try the mobile@login.local format (for new registrations)
+        loginEmail = `${mobile}@login.local`;
+      } else {
+        loginEmail = emailResult as string;
+      }
+
       const { error } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password,
