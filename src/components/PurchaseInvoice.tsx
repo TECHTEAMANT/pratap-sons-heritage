@@ -216,27 +216,43 @@ export default function PurchaseInvoice() {
     setInvoiceAttachment(invoice.vendor_invoice_attachment || '');
 
     try {
+      console.log('Fetching items for PO:', invoice.id);
       const { data: dbItems, error } = await supabase
         .from('purchase_items')
-        .select('*')
+        .select(`
+          *,
+          product_group:product_groups(id, name, group_code),
+          color:colors(id, name, color_code),
+          size:sizes(id, name, size_code)
+        `)
         .eq('po_id', invoice.id);
 
       if (error) {
         console.error('Error loading invoice items for edit:', error);
         setError('Failed to load invoice items for editing');
+        setItems([]);
+        return;
+      }
+
+      console.log('Raw DB Items:', dbItems);
+
+      if (!dbItems || dbItems.length === 0) {
+        console.warn('No items found for invoice:', invoice.id);
+        setItems([]);
+        setOriginalInvoiceQuantities({});
         return;
       }
 
       const quantities: Record<string, number> = {};
       const vendorForInvoice = vendorId || selectedVendor;
-
       const grouped: Record<string, PurchaseItem> = {};
 
-      (dbItems || []).forEach((row: any) => {
+      dbItems.forEach((row: any) => {
+        // Group by design, group, color, cost, mrp, markup, gst_logic, desc, order_no, hsn
         const groupKey = [
           row.design_no || '',
-          row.product_group || '',
-          row.color || '',
+          row.product_group?.id || row.product_group || '',
+          row.color?.id || row.color || '',
           row.cost_per_item || 0,
           row.mrp || 0,
           row.mrp_markup_percent || 0,
@@ -249,42 +265,39 @@ export default function PurchaseInvoice() {
         let existing = grouped[groupKey];
 
         if (!existing) {
-          const floorFromGroup = productGroups.find((g: any) => g.id === row.product_group);
-
           existing = {
             design_no: row.design_no,
-            product_group: row.product_group,
-            floor_id: floorFromGroup?.floor_id || '',
-            color: row.color || '',
+            product_group: row.product_group?.id || row.product_group,
+            floor_id: row.floor_id || '',
+            color: row.color?.id || row.color || '',
             sizes: [],
             cost_per_item: row.cost_per_item,
             mrp_markup_percent: row.mrp_markup_percent,
             mrp: row.mrp,
             gst_logic: row.gst_logic,
-            image_url: '',
+            image_url: '', // Image URL not stored in purchase_items usually, but from master
             description: row.description || '',
             order_number: row.order_number || '',
-            barcodes_per_item: 1,
+            barcodes_per_item: 1, // Default
             payout_code: '',
             hsn_code: row.hsn_code || '',
           };
-
           grouped[groupKey] = existing;
         }
 
         existing.sizes.push({
-          size: row.size,
+          size: row.size?.id || row.size,
           quantity: row.quantity,
           print_quantity: row.quantity,
         });
 
         if (vendorForInvoice) {
           const qtyKey = [
-            vendorForInvoice || '',
+            vendorForInvoice,
             row.design_no || '',
-            row.product_group || '',
-            row.color || '',
-            row.size || '',
+            row.product_group?.id || row.product_group || '',
+            row.color?.id || row.color || '',
+            row.size?.id || row.size || '',
           ].join('__');
 
           quantities[qtyKey] = (quantities[qtyKey] || 0) + (row.quantity || 0);
@@ -292,19 +305,11 @@ export default function PurchaseInvoice() {
       });
 
       const groupedItems = Object.values(grouped);
-
-      if (!groupedItems.length) {
-        setItems([]);
-        setOriginalInvoiceQuantities({});
-        return;
-      }
-
+      console.log('Grouped Items for State:', groupedItems);
+      
       setItems(groupedItems);
-      if (vendorForInvoice) {
-        setOriginalInvoiceQuantities(quantities);
-      } else {
-        setOriginalInvoiceQuantities({});
-      }
+      setOriginalInvoiceQuantities(quantities);
+
     } catch (err: any) {
       console.error('Error preparing invoice for edit:', err);
       setError(err.message || 'Failed to prepare invoice for editing');
@@ -1152,18 +1157,25 @@ export default function PurchaseInvoice() {
     setError('');
 
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const { data: userRecord } = await supabase
+      console.log('Starting savePurchaseOrder transition...');
+      const { data: userData, error: authError } = await supabase.auth.getUser();
+      console.log('Auth user data fetched:', userData, authError);
+      
+      const { data: userRecord, error: userRecError } = await supabase
         .from('users')
         .select('id')
         .eq('auth_user_id', userData?.user?.id)
         .maybeSingle();
+      console.log('User record fetched:', userRecord, userRecError);
 
-      const { count } = await supabase
-        .from('purchase_orders')
-        .select('*', { count: 'exact', head: true });
-
-      const poNumber = `PI${new Date().getFullYear()}${String((count || 0) + 1).padStart(6, '0')}`;
+      console.log('Calling RPC get_next_po_number...');
+      const { data: poNumber, error: poNumError } = await supabase.rpc('get_next_po_number');
+      console.log('RPC result:', poNumber, poNumError);
+      
+      if (poNumError) {
+        console.error('RPC Error details:', poNumError);
+        throw poNumError;
+      }
 
       const itemsTotal = calculateTotal();
       const discountAmt = parseFloat(ledgerDiscount) || 0;
@@ -2727,7 +2739,7 @@ export default function PurchaseInvoice() {
               >
                 <option value="CGST_SGST">CGST + SGST</option>
                 <option value="IGST">IGST</option>
-                <option value="flat_5">Flat 5% GST</option>
+                <option value="FLAT_5">Flat 5% GST</option>
               </select>
             </div>
 

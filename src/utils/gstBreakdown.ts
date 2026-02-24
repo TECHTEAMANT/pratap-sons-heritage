@@ -1,4 +1,4 @@
-export type GSTTransactionType = 'CGST_SGST' | 'IGST' | 'flat_5';
+export type GSTTransactionType = 'CGST_SGST' | 'IGST' | 'FLAT_5';
 
 export interface GSTBreakdown {
   gstType: GSTTransactionType;
@@ -21,7 +21,7 @@ export function calculateGSTBreakdown(
       totalGstAmount: gstAmount,
     };
   } else {
-    // Both 'CGST_SGST' and 'flat_5' split as CGST + SGST
+    // Both 'CGST_SGST' and 'FLAT_5' split as CGST + SGST
     return {
       gstType,
       cgstAmount: gstAmount / 2,
