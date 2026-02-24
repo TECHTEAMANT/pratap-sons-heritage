@@ -11,6 +11,7 @@ export default function UserManagement() {
   const [success, setSuccess] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [localEditRole, setLocalEditRole] = useState<string>('');
 
   const [formData, setFormData] = useState({
     mobile: '',
@@ -108,17 +109,28 @@ export default function UserManagement() {
 
       if (error) throw error;
 
+      // Supabase RLS can silently block updates — data will be empty if 0 rows were changed
+      if (!data || data.length === 0) {
+        throw new Error(
+          'Role update was blocked by database permissions (RLS policy). ' +
+          'Please go to Supabase → Table Editor → users → RLS policies and ensure ' +
+          'admins can UPDATE any row, or temporarily disable RLS on the users table.'
+        );
+      }
+
       console.log('Role updated:', data);
 
       setTimeout(async () => {
         await loadData();
         setEditingId(null);
+        setLocalEditRole('');
         setSuccess('User role updated successfully!');
         setTimeout(() => setSuccess(''), 3000);
         setLoading(false);
       }, 100);
     } catch (err: any) {
       setError(err.message);
+      setLocalEditRole(''); // reset dropdown on failure
       setLoading(false);
     }
   };
@@ -272,9 +284,13 @@ export default function UserManagement() {
                       <td className="p-4 text-sm text-gray-700">
                         {editingId === user.id ? (
                           <select
-                            value={user.role_id || ''}
-                            onChange={(e) => handleUpdateRole(user.id, e.target.value)}
-                            className="px-3 py-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            value={localEditRole}
+                            disabled={loading}
+                            onChange={(e) => {
+                              setLocalEditRole(e.target.value);
+                              handleUpdateRole(user.id, e.target.value);
+                            }}
+                            className="px-3 py-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                           >
                             <option value="">No Role</option>
                             {roles.map((role) => (
@@ -301,7 +317,10 @@ export default function UserManagement() {
                         ) : (
                           <div className="flex items-center gap-3">
                             <button
-                              onClick={() => setEditingId(user.id)}
+                              onClick={() => {
+                              setEditingId(user.id);
+                              setLocalEditRole(user.role_id || '');
+                            }}
                               className="text-blue-600 hover:text-blue-800"
                             >
                               <Edit2 className="w-5 h-5" />
