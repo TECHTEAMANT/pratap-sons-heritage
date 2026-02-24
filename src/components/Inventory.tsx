@@ -223,20 +223,25 @@ export default function Inventory() {
     }
   };
 
+  const MAX_PHOTOS = 3;
+
   const handleEditImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editingItem) return;
     if (!file.type.startsWith('image/')) { setError('Please select an image file'); return; }
     if (file.size > 5 * 1024 * 1024) { setError('Image size should be less than 5MB'); return; }
+    if ((editingItem.images || []).length >= MAX_PHOTOS) { setError(`You can add up to ${MAX_PHOTOS} photos only`); return; }
     setImageUploading(true);
     setError('');
     const reader = new FileReader();
     reader.onloadend = () => {
-      setEditingItem(prev => prev ? { ...prev, images: [reader.result as string] } : null);
+      setEditingItem(prev => prev ? { ...prev, images: [...(prev.images || []), reader.result as string] } : null);
       setImageUploading(false);
     };
     reader.onerror = () => { setError('Failed to read image file'); setImageUploading(false); };
     reader.readAsDataURL(file);
+    // Reset input so same file can be re-selected
+    e.target.value = '';
   };
 
   const openEditCamera = async () => {
@@ -261,7 +266,8 @@ export default function Inventory() {
 
   const captureEditPhoto = () => {
     const video = editVideoRef.current;
-    if (!video) return;
+    if (!video || !editingItem) return;
+    if ((editingItem.images || []).length >= MAX_PHOTOS) { setError(`You can add up to ${MAX_PHOTOS} photos only`); closeEditCamera(); return; }
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
@@ -269,7 +275,7 @@ export default function Inventory() {
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-      setEditingItem(prev => prev ? { ...prev, images: [dataUrl] } : null);
+      setEditingItem(prev => prev ? { ...prev, images: [...(prev.images || []), dataUrl] } : null);
     }
     closeEditCamera();
   };
@@ -744,70 +750,71 @@ export default function Inventory() {
                 </div>
               </div>
 
-              {/* Product Image */}
+              {/* Product Images (up to 3) */}
               <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Product Image</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Product Photos <span className="text-gray-400 font-normal">({(editingItem.images || []).length}/{MAX_PHOTOS})</span>
+                </label>
                 <div className="flex gap-3 items-start flex-wrap">
-                  {/* Current image preview */}
-                  <div className="relative w-32 h-32 border-2 border-gray-300 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100 flex-shrink-0">
-                    {editingItem.images && editingItem.images.length > 0 ? (
-                      <>
-                        <img
-                          src={editingItem.images[0]}
-                          alt="Product"
-                          className="w-full h-full object-cover"
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setEditingItem({ ...editingItem, images: [] })}
-                          className="absolute top-1 right-1 p-1 bg-white/80 rounded-full shadow hover:bg-white"
-                          title="Remove image"
-                        >
-                          <X className="w-4 h-4 text-gray-700" />
-                        </button>
-                      </>
-                    ) : (
-                      <ImageIcon className="w-12 h-12 text-gray-300" />
-                    )}
-                  </div>
+                  {/* Existing image thumbnails */}
+                  {(editingItem.images || []).map((img, imgIdx) => (
+                    <div key={imgIdx} className="relative w-28 h-28 border-2 border-gray-300 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100 flex-shrink-0">
+                      <img
+                        src={img}
+                        alt={`Product ${imgIdx + 1}`}
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEditingItem({ ...editingItem, images: editingItem.images.filter((_, i) => i !== imgIdx) })}
+                        className="absolute top-1 right-1 p-1 bg-white/80 rounded-full shadow hover:bg-white"
+                        title="Remove photo"
+                      >
+                        <X className="w-4 h-4 text-gray-700" />
+                      </button>
+                      <span className="absolute bottom-1 left-1 bg-black/50 text-white text-xs px-1.5 py-0.5 rounded">{imgIdx + 1}</span>
+                    </div>
+                  ))}
 
-                  {/* Upload & camera buttons */}
-                  <div className="flex flex-col gap-2">
-                    <label className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer flex items-center text-sm">
-                      {imageUploading ? (
-                        <Loader className="w-4 h-4 mr-2 animate-spin" />
-                      ) : (
+                  {/* Add photo slots */}
+                  {(editingItem.images || []).length < MAX_PHOTOS && (
+                    <div className="flex flex-col gap-2">
+                      <label className={`px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer flex items-center text-sm ${imageUploading ? 'opacity-70 pointer-events-none' : ''}`}>
+                        {imageUploading ? (
+                          <Loader className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Upload className="w-4 h-4 mr-2" />
+                        )}
+                        Upload Photo
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleEditImageUpload}
+                          className="hidden"
+                          disabled={imageUploading}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={openEditCamera}
+                        disabled={imageUploading}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center text-sm disabled:opacity-50"
+                      >
                         <Upload className="w-4 h-4 mr-2" />
-                      )}
-                      Upload Image
+                        Take Photo
+                      </button>
                       <input
+                        ref={editCameraInputRef}
                         type="file"
                         accept="image/*"
+                        capture="environment"
                         onChange={handleEditImageUpload}
                         className="hidden"
-                        disabled={imageUploading}
                       />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={openEditCamera}
-                      disabled={imageUploading}
-                      className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center text-sm disabled:opacity-50"
-                    >
-                      <Upload className="w-4 h-4 mr-2" />
-                      Take Photo
-                    </button>
-                    <input
-                      ref={editCameraInputRef}
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handleEditImageUpload}
-                      className="hidden"
-                    />
-                    <p className="text-xs text-gray-500">Max 5MB. Replaces current image.</p>
-                  </div>
+                      <p className="text-xs text-gray-500">Max 5MB per photo. Up to {MAX_PHOTOS} photos.</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Inline camera preview */}

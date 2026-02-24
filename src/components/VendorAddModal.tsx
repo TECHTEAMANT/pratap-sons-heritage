@@ -50,23 +50,25 @@ export default function VendorAddModal({ isOpen, onClose, onSuccess }: VendorAdd
       const city = cities.find(c => c.id === cityId);
       if (!city) return '';
 
+      // Fetch ALL vendor codes that start with this city's prefix
+      // (alphabetical sort can return wrong "max" for padded codes)
       const { data: existingVendors, error } = await supabase
         .from('vendors')
         .select('vendor_code')
-        .eq('city_id', cityId)
-        .order('vendor_code', { ascending: false })
-        .limit(1);
+        .ilike('vendor_code', `${city.city_code}%`);
 
       if (error) throw error;
 
-      let nextNumber = 1;
-      if (existingVendors && existingVendors.length > 0) {
-        const lastCode = existingVendors[0].vendor_code;
-        const numberPart = lastCode.slice(city.city_code.length);
-        nextNumber = parseInt(numberPart) + 1;
-      }
+      let maxNumber = 0;
+      (existingVendors || []).forEach(v => {
+        const suffix = v.vendor_code.slice(city.city_code.length);
+        const num = parseInt(suffix, 10);
+        if (!isNaN(num) && num > maxNumber) {
+          maxNumber = num;
+        }
+      });
 
-      return `${city.city_code}${String(nextNumber).padStart(2, '0')}`;
+      return `${city.city_code}${String(maxNumber + 1).padStart(2, '0')}`;
     } catch (err) {
       console.error('Error generating vendor code:', err);
       return '';

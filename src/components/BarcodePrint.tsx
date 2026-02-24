@@ -132,7 +132,7 @@ export default function BarcodePrint() {
       const batches = batchRes.data || [];
       const itemsWithQuantity: any[] = [];
       batches.forEach((batch: any) => {
-        const qty = batch.print_quantity !== null && batch.print_quantity !== undefined 
+        const qty = (batch.print_quantity !== null && batch.print_quantity !== undefined && batch.print_quantity > 0)
           ? batch.print_quantity 
           : (batch.total_quantity || 0);
         // Get order_number from purchase_items lookup, fallback to URL param
