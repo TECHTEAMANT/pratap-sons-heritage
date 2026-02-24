@@ -97,14 +97,19 @@ export default function Inventory() {
       setFloors(floorsRes.data || []);
       const grouped = groupItemsByDesignVendor(batchesRes.data || [], defectiveRes.data || []);
 
-      // Build a set of design+vendor keys already covered by barcode_batches
-      const batchKeys = new Set(
-        (batchesRes.data || []).map((b: any) => `${b.design_no}||${b.vendor}`)
-      );
+      const getBatchKey = (b: any) => {
+        const vendorId = typeof b.vendor === 'object' ? b.vendor?.id : b.vendor;
+        const pgId = typeof b.product_group === 'object' ? b.product_group?.id : b.product_group;
+        const colorId = typeof b.color === 'object' ? b.color?.id : b.color;
+        return `${b.design_no}||${vendorId || ''}||${pgId || ''}||${colorId || ''}`;
+      };
+
+      // Build a set of SKU keys (design+vendor+group+color) already covered by barcode_batches
+      const batchKeys = new Set((batchesRes.data || []).map(getBatchKey));
 
       // Merge product_masters that have no matching barcode batch as 0-stock items
       const masterItems: GroupedItem[] = (mastersRes.data || []).reduce((acc: GroupedItem[], pm: any) => {
-        const key = `${pm.design_no}||${pm.vendor?.id || pm.vendor}`;
+        const key = getBatchKey(pm);
         if (!batchKeys.has(key)) {
           acc.push({
             design_no: pm.design_no,
