@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Database, Plus, Edit2, Save, X, Loader } from 'lucide-react';
+import { Database, Plus, Edit2, Save, X, Loader, Search } from 'lucide-react';
 import DiscountManagement from './DiscountManagement';
 import PayoutCodeManagement from './PayoutCodeManagement';
 import CommissionSlabManagement from './CommissionSlabManagement';
@@ -18,6 +18,7 @@ export default function MasterData() {
   const [success, setSuccess] = useState('');
   const [cities, setCities] = useState<any[]>([]);
   const [floors, setFloors] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const tabs = [
     { id: 'productGroups', label: 'Product Groups', table: 'product_groups' },
@@ -79,6 +80,42 @@ export default function MasterData() {
       setLoading(false);
     }
   };
+
+  const filteredData = data.filter((item) => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+
+    // Check all primitive fields in the item
+    const matchesPrimitive = Object.keys(item).some((key) => {
+      if (['id', 'created_at', 'updated_at', 'city_id', 'floor_id'].includes(key)) return false;
+      const value = item[key];
+      if (value === null || value === undefined) return false;
+      return String(value).toLowerCase().includes(searchLower);
+    });
+
+    if (matchesPrimitive) return true;
+
+    // Check joined data
+    if (activeTab === 'vendors' && item.cities) {
+      if (
+        item.cities.name?.toLowerCase().includes(searchLower) ||
+        item.cities.city_code?.toLowerCase().includes(searchLower)
+      ) {
+        return true;
+      }
+    }
+
+    if (activeTab === 'productGroups' && item.floors) {
+      if (
+        item.floors.name?.toLowerCase().includes(searchLower) ||
+        item.floors.floor_code?.toLowerCase().includes(searchLower)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  });
 
   const loadCities = async () => {
     try {
@@ -508,7 +545,7 @@ export default function MasterData() {
   };
 
   const renderTableRows = () => {
-    return data.map((item) => (
+    return filteredData.map((item) => (
       <tr key={item.id} className="border-b hover:bg-gray-50">
         {editingId === item.id ? (
           <td colSpan={100} className="p-4">
@@ -610,6 +647,19 @@ export default function MasterData() {
               {tab.label}
             </button>
           ))}
+        </div>
+
+        <div className="mb-6">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder={`Search ${tabs.find((t) => t.id === activeTab)?.label}...`}
+              className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+            />
+          </div>
         </div>
 
         {activeTab === 'discounts' ? (

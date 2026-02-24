@@ -69,8 +69,6 @@ export default function PurchaseInvoice() {
 
   const [taxableValue, setTaxableValue] = useState('');
   const [calculatedGST, setCalculatedGST] = useState(0);
-  const [manualGST, setManualGST] = useState('');
-  const [gstDifferenceReason, setGstDifferenceReason] = useState('');
   const [gstType, setGstType] = useState<GSTTransactionType>('CGST_SGST');
 
   // Other Ledger
@@ -206,11 +204,6 @@ export default function PurchaseInvoice() {
       setTaxableValue('');
     }
 
-    if (invoice.manual_gst_amount !== undefined && invoice.manual_gst_amount !== null) {
-      setManualGST(String(invoice.manual_gst_amount));
-    } else {
-      setManualGST('');
-    }
 
     if (invoice.gst_type) {
       setGstType(invoice.gst_type as GSTTransactionType);
@@ -221,30 +214,45 @@ export default function PurchaseInvoice() {
     setLedgerFreightGstRate((invoice.ledger_freight_gst_rate === 18 ? 18 : 5) as 5 | 18);
 
     setInvoiceAttachment(invoice.vendor_invoice_attachment || '');
-    setGstDifferenceReason(invoice.gst_difference_reason || '');
 
     try {
+      console.log('Fetching items for PO:', invoice.id);
       const { data: dbItems, error } = await supabase
         .from('purchase_items')
-        .select('*')
+        .select(`
+          *,
+          product_group:product_groups(id, name, group_code),
+          color:colors(id, name, color_code),
+          size:sizes(id, name, size_code)
+        `)
         .eq('po_id', invoice.id);
 
       if (error) {
         console.error('Error loading invoice items for edit:', error);
         setError('Failed to load invoice items for editing');
+        setItems([]);
+        return;
+      }
+
+      console.log('Raw DB Items:', dbItems);
+
+      if (!dbItems || dbItems.length === 0) {
+        console.warn('No items found for invoice:', invoice.id);
+        setItems([]);
+        setOriginalInvoiceQuantities({});
         return;
       }
 
       const quantities: Record<string, number> = {};
       const vendorForInvoice = vendorId || selectedVendor;
-
       const grouped: Record<string, PurchaseItem> = {};
 
-      (dbItems || []).forEach((row: any) => {
+      dbItems.forEach((row: any) => {
+        // Group by design, group, color, cost, mrp, markup, gst_logic, desc, order_no, hsn
         const groupKey = [
           row.design_no || '',
-          row.product_group || '',
-          row.color || '',
+          row.product_group?.id || row.product_group || '',
+          row.color?.id || row.color || '',
           row.cost_per_item || 0,
           row.mrp || 0,
           row.mrp_markup_percent || 0,
@@ -257,42 +265,39 @@ export default function PurchaseInvoice() {
         let existing = grouped[groupKey];
 
         if (!existing) {
-          const floorFromGroup = productGroups.find((g: any) => g.id === row.product_group);
-
           existing = {
             design_no: row.design_no,
-            product_group: row.product_group,
-            floor_id: floorFromGroup?.floor_id || '',
-            color: row.color || '',
+            product_group: row.product_group?.id || row.product_group,
+            floor_id: row.floor_id || '',
+            color: row.color?.id || row.color || '',
             sizes: [],
             cost_per_item: row.cost_per_item,
             mrp_markup_percent: row.mrp_markup_percent,
             mrp: row.mrp,
             gst_logic: row.gst_logic,
-            image_url: '',
+            image_url: '', // Image URL not stored in purchase_items usually, but from master
             description: row.description || '',
             order_number: row.order_number || '',
-            barcodes_per_item: 1,
+            barcodes_per_item: 1, // Default
             payout_code: '',
             hsn_code: row.hsn_code || '',
           };
-
           grouped[groupKey] = existing;
         }
 
         existing.sizes.push({
-          size: row.size,
+          size: row.size?.id || row.size,
           quantity: row.quantity,
           print_quantity: row.quantity,
         });
 
         if (vendorForInvoice) {
           const qtyKey = [
-            vendorForInvoice || '',
+            vendorForInvoice,
             row.design_no || '',
-            row.product_group || '',
-            row.color || '',
-            row.size || '',
+            row.product_group?.id || row.product_group || '',
+            row.color?.id || row.color || '',
+            row.size?.id || row.size || '',
           ].join('__');
 
           quantities[qtyKey] = (quantities[qtyKey] || 0) + (row.quantity || 0);
@@ -300,19 +305,11 @@ export default function PurchaseInvoice() {
       });
 
       const groupedItems = Object.values(grouped);
-
-      if (!groupedItems.length) {
-        setItems([]);
-        setOriginalInvoiceQuantities({});
-        return;
-      }
-
+      console.log('Grouped Items for State:', groupedItems);
+      
       setItems(groupedItems);
-      if (vendorForInvoice) {
-        setOriginalInvoiceQuantities(quantities);
-      } else {
-        setOriginalInvoiceQuantities({});
-      }
+      setOriginalInvoiceQuantities(quantities);
+
     } catch (err: any) {
       console.error('Error preparing invoice for edit:', err);
       setError(err.message || 'Failed to prepare invoice for editing');
@@ -415,16 +412,8 @@ export default function PurchaseInvoice() {
       const itemsGst = calculateGSTFromTaxable(parseFloat(taxableValue));
       const totalGst = itemsGst + freightGst;
       setCalculatedGST(totalGst);
-      if (!manualGST) {
-        setManualGST(totalGst.toFixed(2));
-      }
     } else {
       setCalculatedGST(freightGst);
-      if (!items.length && !freightAmt) {
-        setManualGST('');
-      } else if (freightGst > 0 && !manualGST) {
-        setManualGST(freightGst.toFixed(2));
-      }
     }
   }, [taxableValue, items.length, ledgerFreight, ledgerFreightGstRate]);
 
@@ -1168,24 +1157,31 @@ export default function PurchaseInvoice() {
     setError('');
 
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const { data: userRecord } = await supabase
+      console.log('Starting savePurchaseOrder transition...');
+      const { data: userData, error: authError } = await supabase.auth.getUser();
+      console.log('Auth user data fetched:', userData, authError);
+      
+      const { data: userRecord, error: userRecError } = await supabase
         .from('users')
         .select('id')
         .eq('auth_user_id', userData?.user?.id)
         .maybeSingle();
+      console.log('User record fetched:', userRecord, userRecError);
 
-      const { count } = await supabase
-        .from('purchase_orders')
-        .select('*', { count: 'exact', head: true });
-
-      const poNumber = `PI${new Date().getFullYear()}${String((count || 0) + 1).padStart(6, '0')}`;
+      console.log('Calling RPC get_next_po_number...');
+      const { data: poNumber, error: poNumError } = await supabase.rpc('get_next_po_number');
+      console.log('RPC result:', poNumber, poNumError);
+      
+      if (poNumError) {
+        console.error('RPC Error details:', poNumError);
+        throw poNumError;
+      }
 
       const itemsTotal = calculateTotal();
       const discountAmt = parseFloat(ledgerDiscount) || 0;
       const freightAmt = parseFloat(ledgerFreight) || 0;
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
-      const finalGST = parseFloat(manualGST || '0');
+      const finalGST = calculatedGST;
       const grandTotal = itemsTotal - discountAmt + freightAmt + finalGST;
 
       const { data: po, error: poError } = await supabase
@@ -1203,9 +1199,9 @@ export default function PurchaseInvoice() {
           ledger_discount: discountAmt > 0 ? discountAmt : null,
           ledger_freight: freightAmt > 0 ? freightAmt : null,
           ledger_freight_gst_rate: freightAmt > 0 ? ledgerFreightGstRate : null,
-          manual_gst_amount: finalGST !== calculatedGST ? finalGST : null,
+          manual_gst_amount: null,
           vendor_invoice_attachment: invoiceAttachment || null,
-          gst_difference_reason: finalGST !== calculatedGST ? gstDifferenceReason : null,
+          gst_difference_reason: null,
           gst_type: gstType,
           created_by: userRecord?.id || null,
         }])
@@ -1454,7 +1450,7 @@ export default function PurchaseInvoice() {
 
       setItems([]);
       setTaxableValue('');
-      setManualGST('');
+
       setVendorInvoiceNumber('');
       setInvoiceAttachment('');
       setLedgerDiscount('');
@@ -1521,7 +1517,7 @@ export default function PurchaseInvoice() {
       const discountAmt = parseFloat(ledgerDiscount) || 0;
       const freightAmt = parseFloat(ledgerFreight) || 0;
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
-      const finalGST = parseFloat(manualGST || '0');
+      const finalGST = calculatedGST;
       const grandTotal = itemsTotal - discountAmt + freightAmt + finalGST;
 
       const { error: poUpdateError } = await supabase
@@ -1538,9 +1534,9 @@ export default function PurchaseInvoice() {
           ledger_discount: discountAmt > 0 ? discountAmt : null,
           ledger_freight: freightAmt > 0 ? freightAmt : null,
           ledger_freight_gst_rate: freightAmt > 0 ? ledgerFreightGstRate : null,
-          manual_gst_amount: finalGST !== calculatedGST ? finalGST : null,
+          manual_gst_amount: null,
           vendor_invoice_attachment: invoiceAttachment || null,
-          gst_difference_reason: finalGST !== calculatedGST ? gstDifferenceReason : null,
+          gst_difference_reason: null,
           gst_type: gstType,
           modified_by: userRecord?.id || null,
           updated_at: new Date().toISOString(),
@@ -2673,7 +2669,6 @@ export default function PurchaseInvoice() {
                     value={ledgerDiscount}
                     onChange={(e) => {
                       setLedgerDiscount(e.target.value);
-                      setManualGST('');
                     }}
                     className="w-full pl-8 pr-4 py-2 border-2 border-red-200 rounded-lg focus:ring-2 focus:ring-red-400 focus:border-red-400 bg-red-50"
                     placeholder="0.00"
@@ -2695,7 +2690,6 @@ export default function PurchaseInvoice() {
                     value={ledgerFreightGstRate}
                     onChange={(e) => {
                       setLedgerFreightGstRate(parseInt(e.target.value) as 5 | 18);
-                      setManualGST('');
                     }}
                     className="w-36 px-3 py-2 border-2 border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-400 bg-blue-50 font-semibold text-blue-800"
                   >
@@ -2712,7 +2706,6 @@ export default function PurchaseInvoice() {
                       value={ledgerFreight}
                       onChange={(e) => {
                         setLedgerFreight(e.target.value);
-                        setManualGST('');
                       }}
                       className="w-full pl-8 pr-4 py-2 border-2 border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 bg-blue-50"
                       placeholder="0.00"
@@ -2746,6 +2739,7 @@ export default function PurchaseInvoice() {
               >
                 <option value="CGST_SGST">CGST + SGST</option>
                 <option value="IGST">IGST</option>
+                <option value="FLAT_5">Flat 5% GST</option>
               </select>
             </div>
 
@@ -2774,35 +2768,7 @@ export default function PurchaseInvoice() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Manual GST Override
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={manualGST}
-                onChange={(e) => setManualGST(e.target.value)}
-                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
-                placeholder="Override GST"
-              />
-            </div>
           </div>
-
-          {parseFloat(manualGST || '0') !== calculatedGST && (
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Reason for GST Difference
-              </label>
-              <textarea
-                value={gstDifferenceReason}
-                onChange={(e) => setGstDifferenceReason(e.target.value)}
-                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
-                rows={2}
-                placeholder="Explain why GST was manually adjusted"
-              />
-            </div>
-          )}
         </div>
 
         <div className="border-t-2 border-gray-200 pt-6 mb-6">
@@ -2850,10 +2816,10 @@ export default function PurchaseInvoice() {
           )}
           <div className="flex justify-between text-lg font-semibold text-gray-700 mt-2 border-t border-emerald-200 pt-2">
             <span>Total GST:</span>
-            <span className="text-emerald-700">₹{parseFloat(manualGST || '0').toFixed(2)}</span>
+            <span className="text-emerald-700">₹{calculatedGST.toFixed(2)}</span>
           </div>
           {(() => {
-            const exact = calculateTotal() - (parseFloat(ledgerDiscount) || 0) + (parseFloat(ledgerFreight) || 0) + parseFloat(manualGST || '0');
+            const exact = calculateTotal() - (parseFloat(ledgerDiscount) || 0) + (parseFloat(ledgerFreight) || 0) + calculatedGST;
             const rounded = Math.round(exact);
             const roundOff = rounded - exact;
             return (

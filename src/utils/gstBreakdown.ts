@@ -1,4 +1,4 @@
-export type GSTTransactionType = 'CGST_SGST' | 'IGST';
+export type GSTTransactionType = 'CGST_SGST' | 'IGST' | 'FLAT_5';
 
 export interface GSTBreakdown {
   gstType: GSTTransactionType;
@@ -12,20 +12,21 @@ export function calculateGSTBreakdown(
   gstAmount: number,
   gstType: GSTTransactionType
 ): GSTBreakdown {
-  if (gstType === 'CGST_SGST') {
-    return {
-      gstType: 'CGST_SGST',
-      cgstAmount: gstAmount / 2,
-      sgstAmount: gstAmount / 2,
-      igstAmount: 0,
-      totalGstAmount: gstAmount,
-    };
-  } else {
+  if (gstType === 'IGST') {
     return {
       gstType: 'IGST',
       cgstAmount: 0,
       sgstAmount: 0,
       igstAmount: gstAmount,
+      totalGstAmount: gstAmount,
+    };
+  } else {
+    // Both 'CGST_SGST' and 'FLAT_5' split as CGST + SGST
+    return {
+      gstType,
+      cgstAmount: gstAmount / 2,
+      sgstAmount: gstAmount / 2,
+      igstAmount: 0,
       totalGstAmount: gstAmount,
     };
   }
