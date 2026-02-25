@@ -408,7 +408,8 @@ export default function Inventory() {
       item.vendor_name.toLowerCase().includes(searchLower) ||
       item.vendor_code.toLowerCase().includes(searchLower) ||
       item.description.toLowerCase().includes(searchLower) ||
-      (item.order_number && item.order_number.toLowerCase().includes(searchLower))
+      (item.order_number && item.order_number.toLowerCase().includes(searchLower)) ||
+      item.sizes.some(s => s.barcode_8digit.toLowerCase().includes(searchLower))
     );
   });
 
