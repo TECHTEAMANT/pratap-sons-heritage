@@ -1169,13 +1169,20 @@ export default function PurchaseInvoice() {
       console.log('User record fetched:', userRecord, userRecError);
 
       console.log('Calling RPC get_next_po_number...');
-      const { data: poNumber, error: poNumError } = await supabase.rpc('get_next_po_number');
+      let { data: poNumber, error: poNumError } = await supabase.rpc('get_next_po_number');
       console.log('RPC result:', poNumber, poNumError);
       
-      if (poNumError) {
-        console.error('RPC Error details:', poNumError);
-        throw poNumError;
+      if (poNumError || !poNumber) {
+        console.warn('RPC failed or returned null, falling back to client-side generation:', poNumError);
+        const { count, error: countError } = await supabase
+          .from('purchase_orders')
+          .select('*', { count: 'exact', head: true });
+        
+        if (countError) throw countError;
+        poNumber = `PI${new Date().getFullYear()}${String((count || 0) + 1).padStart(6, '0')}`;
+        console.log('Fallback PO Number generated:', poNumber);
       }
+
 
       const itemsTotal = calculateTotal();
       const discountAmt = parseFloat(ledgerDiscount) || 0;

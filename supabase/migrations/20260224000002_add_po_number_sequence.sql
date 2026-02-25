@@ -23,11 +23,12 @@ BEGIN
   -- Get current year (YYYY)
   current_year := to_char(now(), 'YYYY');
 
-  -- Increment and get next number
-  UPDATE purchase_order_sequence 
-  SET last_number = last_number + 1,
+  -- Increment and get next number, initializing if necessary
+  INSERT INTO purchase_order_sequence (id, last_number)
+  VALUES (1, 1)
+  ON CONFLICT (id) DO UPDATE 
+  SET last_number = purchase_order_sequence.last_number + 1,
       updated_at = now()
-  WHERE id = 1
   RETURNING last_number INTO next_num;
   
   -- Format as PI + YYYY + 6-digit sequence
@@ -36,6 +37,7 @@ BEGIN
   RETURN po_str;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- Grant execution to authenticated users
 GRANT EXECUTE ON FUNCTION get_next_po_number() TO authenticated;
