@@ -10,6 +10,7 @@ import { GSTTransactionType } from '../utils/gstBreakdown';
 import { encodeCostForVendor } from '../utils/costEncoding';
 import { generateBarcodeDataURL } from '../utils/barcodeGenerator';
 import VendorAddModal from './VendorAddModal';
+import { usePermissions } from '../hooks/usePermissions';
 
 interface SizeQuantity {
   size: string;
@@ -52,6 +53,8 @@ interface BarcodePreview {
 }
 
 export default function PurchaseInvoice() {
+  const { roleName } = usePermissions();
+  const canDeleteInvoice = roleName === 'Admin' || roleName === 'Sub-Admin';
   const [vendors, setVendors] = useState<any[]>([]);
   const [productGroups, setProductGroups] = useState<any[]>([]);
   const [colors, setColors] = useState<any[]>([]);
@@ -108,6 +111,29 @@ export default function PurchaseInvoice() {
   const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<any[]>([]);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+
+  const handleDeleteInvoice = async (invoiceId: string, poNumber: string) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to DELETE invoice "${poNumber}"?\n\nThis will permanently:\n• Remove the invoice and all its items\n• Reverse inventory quantities in barcode batches\n\nThis action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setError('');
+    try {
+      const { error: rpcError } = await supabase
+        .rpc('delete_purchase_invoice', { p_po_id: invoiceId });
+
+      if (rpcError) throw rpcError;
+
+      // Remove from local state
+      setInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
+      setSuccess(`Invoice ${poNumber} deleted successfully. Inventory has been reversed.`);
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (err: any) {
+      console.error('Error deleting invoice:', err);
+      setError(err.message || 'Failed to delete invoice. Please try again.');
+    }
+  };
 
   const handlePrintBarcodes = () => {
     const poId = savedPOId || selectedInvoice?.id;
@@ -792,6 +818,15 @@ export default function PurchaseInvoice() {
                           >
                             <Eye className="w-5 h-5" />
                           </button>
+                          {canDeleteInvoice && (
+                            <button
+                              onClick={() => handleDeleteInvoice(inv.id, inv.po_number)}
+                              className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                              title="Delete Invoice (Admin/Sub-Admin only)"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

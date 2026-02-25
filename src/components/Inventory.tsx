@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Package, Search, Image as ImageIcon, RefreshCw, Edit2, X, Save, Upload, Loader } from 'lucide-react';
+import { Package, Search, Image as ImageIcon, RefreshCw, Edit2, X, Save, Upload, Loader, Trash2 } from 'lucide-react';
+import { usePermissions } from '../hooks/usePermissions';
 
 interface GroupedItem {
   design_no: string;
@@ -37,6 +38,8 @@ interface GroupedItem {
 }
 
 export default function Inventory() {
+  const { roleName } = usePermissions();
+  const canDeleteInventory = roleName === 'Admin' || roleName === 'Sub-Admin';
   const [groupedItems, setGroupedItems] = useState<GroupedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -225,6 +228,62 @@ export default function Inventory() {
     if (editStreamRef.current) {
       editStreamRef.current.getTracks().forEach(t => t.stop());
       editStreamRef.current = null;
+    }
+  };
+
+  const handleDeleteInventoryItem = async (batchId: string, barcode: string, sizeName: string) => {
+    const confirmed = window.confirm(
+      `Delete inventory batch for Size: ${sizeName} (Barcode: ${barcode})?
+
+This will:
+• Permanently remove this size from inventory
+• Auto-remove its print logs
+
+Blocked if: item has been sold or has active bookings.
+
+This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setError('');
+    try {
+      const { error: rpcError } = await supabase
+        .rpc('delete_inventory_item', { p_batch_id: batchId });
+
+      if (rpcError) throw rpcError;
+
+      setSuccess(`Size ${sizeName} (${barcode}) deleted successfully.`);
+      setTimeout(() => setSuccess(''), 4000);
+      await loadInventory();
+    } catch (err: any) {
+      console.error('Error deleting inventory item:', err);
+      setError(err.message || 'Failed to delete inventory item.');
+    }
+  };
+
+  const handleDeleteProductMaster = async (designNo: string, vendorId: string, productGroupId: string, colorId: string) => {
+    const confirmed = window.confirm(
+      `Delete "${designNo}" from inventory?\n\nThis item has no stock received and no purchase invoice.\nIt will be permanently removed from the system.\n\nThis action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setError('');
+    try {
+      const { error: rpcError } = await supabase.rpc('delete_product_master', {
+        p_design_no: designNo,
+        p_vendor_id: vendorId,
+        p_group_id:  productGroupId,
+        p_color_id:  colorId && colorId.trim() !== '' ? colorId : null,
+      });
+
+      if (rpcError) throw rpcError;
+
+      setSuccess(`"${designNo}" removed from inventory successfully.`);
+      setTimeout(() => setSuccess(''), 4000);
+      await loadInventory();
+    } catch (err: any) {
+      console.error('Error deleting product master:', err);
+      setError(err.message || 'Failed to delete item. Please try again.');
     }
   };
 
@@ -444,6 +503,18 @@ export default function Inventory() {
               placeholder="Search by design, vendor, product, color, order number..."
             />
           </div>
+          {error && (
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm flex items-start gap-2">
+              <span className="font-bold mt-0.5">⚠</span>
+              <span>{error}</span>
+              <button onClick={() => setError('')} className="ml-auto text-red-400 hover:text-red-600"><X className="w-4 h-4" /></button>
+            </div>
+          )}
+          {success && (
+            <div className="mt-3 p-3 bg-green-50 border border-green-200 text-green-700 rounded-lg text-sm">
+              ✅ {success}
+            </div>
+          )}
         </div>
 
         <div className="mb-4">
@@ -524,6 +595,21 @@ export default function Inventory() {
                           <Edit2 className="w-4 h-4 mr-1" />
                           Edit
                         </button>
+                        {canDeleteInventory && item.from_product_master && (
+                          <button
+                            onClick={() => handleDeleteProductMaster(
+                              item.design_no,
+                              item.vendor_id,
+                              item.product_group_id,
+                              item.color_id
+                            )}
+                            className="px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center text-sm shadow-md transition"
+                            title="Remove this wrongly added item"
+                          >
+                            <Trash2 className="w-4 h-4 mr-1" />
+                            Delete
+                          </button>
+                        )}
                         <div>
                           <p className="text-xl font-bold text-emerald-700">₹{item.mrp?.toFixed(2)}</p>
                           <p className="text-xs text-gray-500">Cost: ₹{item.cost?.toFixed(2)}</p>
@@ -600,6 +686,16 @@ export default function Inventory() {
                               <div className="text-xs text-gray-500 mt-0.5">
                                 Floor: {size.floor_name}
                               </div>
+                              {canDeleteInventory && (
+                                <button
+                                  onClick={() => handleDeleteInventoryItem(size.batch_id, size.barcode_8digit, size.size_name)}
+                                  className="mt-1 flex items-center gap-1 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-1.5 py-0.5 rounded transition"
+                                  title="Delete this size batch"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  Delete
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
