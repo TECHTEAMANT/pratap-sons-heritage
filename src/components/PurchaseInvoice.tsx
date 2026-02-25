@@ -1174,13 +1174,24 @@ export default function PurchaseInvoice() {
       
       if (poNumError || !poNumber) {
         console.warn('RPC failed or returned null, falling back to client-side generation:', poNumError);
-        const { count, error: countError } = await supabase
-          .from('purchase_orders')
-          .select('*', { count: 'exact', head: true });
-        
-        if (countError) throw countError;
-        poNumber = `PI${new Date().getFullYear()}${String((count || 0) + 1).padStart(6, '0')}`;
-        console.log('Fallback PO Number generated:', poNumber);
+        try {
+          const { count, error: countError } = await supabase
+            .from('purchase_orders')
+            .select('*', { count: 'exact', head: true });
+          
+          if (!countError) {
+            poNumber = `PI${new Date().getFullYear()}${String((count || 0) + 1).padStart(6, '0')}`;
+            console.log('Fallback PO Number generated:', poNumber);
+          }
+        } catch (fallbackErr) {
+          console.warn('Fallback count query also failed:', fallbackErr);
+        }
+      }
+
+      // Final safety net: if poNumber is still null/undefined, generate using timestamp
+      if (!poNumber) {
+        poNumber = `PI${new Date().getFullYear()}${Date.now().toString().slice(-6)}`;
+        console.log('Timestamp-based PO Number generated:', poNumber);
       }
 
 
