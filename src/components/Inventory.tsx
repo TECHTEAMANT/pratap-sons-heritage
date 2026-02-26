@@ -37,8 +37,41 @@ interface GroupedItem {
 }
 
 export default function Inventory() {
-  const [groupedItems, setGroupedItems] = useState<GroupedItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const GLOBAL_CACHE_KEY = 'inventory_global_data';
+  const CACHE_TTL = 15 * 60 * 1000;
+  
+  const getCacheKey = (page: number, search: string) => `inventory_cache_p${page}_s${search.trim().toLowerCase()}`;
+
+  const [groupedItems, setGroupedItems] = useState<GroupedItem[]>(() => {
+    const cached = localStorage.getItem(GLOBAL_CACHE_KEY);
+    if (cached) {
+      try {
+        const { data, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < CACHE_TTL) return data.slice(0, 20);
+      } catch (e) {}
+    }
+    return [];
+  });
+  const [totalCount, setTotalCount] = useState<number>(() => {
+    const cached = localStorage.getItem(GLOBAL_CACHE_KEY);
+    if (cached) {
+      try {
+        const { data, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < CACHE_TTL) return data.length;
+      } catch (e) {}
+    }
+    return 0;
+  });
+  const [loading, setLoading] = useState(() => {
+    const cached = localStorage.getItem(GLOBAL_CACHE_KEY);
+    if (cached) {
+      try {
+        const { timestamp } = JSON.parse(cached);
+        return Date.now() - timestamp >= CACHE_TTL;
+      } catch (e) {}
+    }
+    return true;
+  });
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<GroupedItem | null>(null);
@@ -52,65 +85,243 @@ export default function Inventory() {
   const editStreamRef = useRef<MediaStream | null>(null);
   const editCameraInputRef = useRef<HTMLInputElement | null>(null);
 
+  const [pageSize] = useState(20);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // In-memory store for images to bypass localStorage 5MB quota
+  // Keyed by getBatchKey(item)
+  const imageStore = useRef<{ [key: string]: string[] }>({});
+
+  const stripImages = (items: GroupedItem[]): GroupedItem[] => {
+    return items.map(item => ({ ...item, images: [] }));
+  };
+
+  const hydrateImages = (items: GroupedItem[]): { hydrated: GroupedItem[], missingTotal: number } => {
+    let missingTotal = 0;
+    const hydrated = items.map(item => {
+      const key = getBatchKey(item);
+      const stored = imageStore.current[key];
+      const hasImages = (item.images && item.images.length > 0);
+      if (!hasImages && (!stored || stored.length === 0)) {
+        missingTotal++;
+      }
+      return { ...item, images: (stored && stored.length > 0) ? stored : item.images };
+    });
+    return { hydrated, missingTotal };
+  };
+
+  const updateImageStore = (items: GroupedItem[]) => {
+    items.forEach(item => {
+      if (item.images && item.images.length > 0) {
+        const key = getBatchKey(item);
+        // Only store if we don't have it or if it was empty
+        if (!imageStore.current[key] || imageStore.current[key].length === 0) {
+          imageStore.current[key] = item.images;
+        }
+      }
+    });
+  };
+
   useEffect(() => {
-    loadInventory();
-  }, []);
+    loadInventory(currentPage);
+  }, [currentPage]);
 
-  const loadInventory = async () => {
-    setLoading(true);
+  const getBatchKey = (b: any) => {
+    // Robust key with trim and lowercase to handle data inconsistencies
+    const designNo = (b.design_no || '').toString().trim().toLowerCase();
+    const vendorId = (b.vendor_id || (typeof b.vendor === 'object' ? b.vendor?.id : b.vendor) || '').toString().trim().toLowerCase();
+    const pgId = b.product_group_id || (typeof b.product_group === 'object' ? b.product_group?.id : b.product_group);
+    const pgIdStr = (pgId || '').toString().trim().toLowerCase();
+    const colorId = b.color_id || (typeof b.color === 'object' ? b.color?.id : b.color);
+    const colorIdStr = (colorId || '').toString().trim().toLowerCase();
+    
+    return `${designNo}||${vendorId}||${pgIdStr}||${colorIdStr}`;
+  };
 
+  const loadInventory = async (page = 1, forceRefresh = false, silent = false) => {
+    setError('');
+    const cacheKey = getCacheKey(page, searchTerm);
+    
+    // 1. Check Global Cache first (if no search)
+    // CRITICAL: Bypass this if in 'silent' mode, otherwise it will just hit the same empty-image cache
+    if (!searchTerm && !forceRefresh && !silent) { 
+      const globalCached = localStorage.getItem(GLOBAL_CACHE_KEY);
+      if (globalCached) {
+        try {
+          const { data, timestamp } = JSON.parse(globalCached);
+          if (Date.now() - timestamp < CACHE_TTL) {
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize;
+            const pagedData = data.slice(from, to);
+            
+            if (page === currentPage && !searchTerm) {
+              const { hydrated, missingTotal } = hydrateImages(pagedData);
+              setGroupedItems(hydrated);
+              // Don't update totalCount from cache if we have a fresher one, 
+              // but for global cache we trust the data length if it's the full set.
+              if (data.length > 0) setTotalCount(data.length);
+              setLoading(false);
+              
+              // If current view is missing images, trigger a silent fetch even if cached
+              if (missingTotal > 0) {
+                loadInventory(page, false, true); 
+              }
+            }
+            
+            // If we don't have page cache for this, do a silent fetch to get images
+            const pageCached = localStorage.getItem(cacheKey);
+            if (!pageCached || forceRefresh) {
+              loadInventory(page, false, true); // SILENT fetch
+            }
+            
+            syncInventory();
+            return;
+          }
+        } catch (e) {
+          console.warn('Failed to parse global cache', e);
+        }
+      }
+    }
+
+    // 2. Check Page Cache
+    if (!forceRefresh && !silent) {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const { data, total, timestamp } = JSON.parse(cached);
+          if (Date.now() - timestamp < CACHE_TTL) {
+            const { hydrated, missingTotal } = hydrateImages(data);
+            setGroupedItems(hydrated);
+            setTotalCount(total);
+            setLoading(false);
+
+            // If images missing from session memory, fetch them silently
+            if (missingTotal > 0) {
+              loadInventory(page, false, true);
+            }
+            return;
+          }
+        } catch (e) {
+          console.warn('Failed to parse cached inventory', e);
+        }
+      }
+    }
+
+    // 3. Not in cache or forced refresh or SILENT - Fetch from DB
+    if (!silent) setLoading(true);
     try {
-      const [batchesRes, defectiveRes, floorsRes, mastersRes] = await Promise.all([
-        supabase
-          .from('barcode_batches')
-          .select(`
-            *,
-            product_group:product_groups(id, name, group_code),
-            color:colors(id, name, color_code),
-            size:sizes(id, name, size_code),
-            vendor:vendors(id, name, vendor_code),
-            floor:floors(id, name, floor_code)
-          `)
-          .eq('status', 'active')
-          .order('created_at', { ascending: false }),
-        supabase
+      const currentSearch = searchTerm;
+
+      // Only fetch the full master count if we are on page 1 or searching
+      if (!silent && !searchTerm && page === 1) {
+          const { count: stableTotal } = await supabase.from('product_masters').select('*', { count: 'exact', head: true });
+          if (stableTotal !== null) setTotalCount(stableTotal);
+      }
+
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      // 1. Fetch Floors
+      const { data: floorsData } = await supabase
+        .from('floors')
+        .select('*')
+        .eq('active', true);
+      setFloors(floorsData || []);
+
+      // 2. Fetch Product Masters (Paginated)
+      let masterQuery = supabase
+        .from('product_masters')
+        .select(`
+          *,
+          product_group:product_groups(id, name, group_code),
+          color:colors(id, name, color_code),
+          vendor:vendors(id, name, vendor_code)
+        `, { count: 'exact' });
+
+      if (searchTerm) {
+        masterQuery = masterQuery.or(`design_no.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`);
+      }
+
+      const { data: masters, count, error: mastersError } = await masterQuery
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (mastersError) throw mastersError;
+      
+      // Update global total count only on fresh load or filters
+      if (count !== null && page === 1) {
+        setTotalCount(count);
+      }
+
+      if (!masters || masters.length === 0) {
+        if (page === currentPage && searchTerm === currentSearch) {
+          setGroupedItems([]);
+        }
+        return;
+      }
+
+      // 4. PRE-GROUP MASTERS: Handle DB duplicates (same design/vendor/color/group)
+      const uniqueMastersMap: { [key: string]: any } = {};
+      masters.forEach(m => {
+        const key = getBatchKey(m);
+        if (!uniqueMastersMap[key]) {
+          uniqueMastersMap[key] = m;
+        } else {
+          // Merge photos if the first one was empty
+          if ((!uniqueMastersMap[key].photos || uniqueMastersMap[key].photos.length === 0) && m.photos && m.photos.length > 0) {
+            uniqueMastersMap[key].photos = m.photos;
+          }
+        }
+      });
+      const uniqueMasters = Object.values(uniqueMastersMap);
+
+      // 5. Fetch Barcode Batches for these unique masters
+      const designNos = Array.from(new Set(uniqueMasters.map(m => m.design_no)));
+      const vendorIds = Array.from(new Set(uniqueMasters.map(m => m.vendor?.id).filter(Boolean)));
+
+      const { data: batches, error: batchesError } = await supabase
+        .from('barcode_batches')
+        .select(`
+          *,
+          product_group:product_groups(id, name, group_code),
+          color:colors(id, name, color_code),
+          size:sizes(id, name, size_code),
+          vendor:vendors(id, name, vendor_code),
+          floor:floors(id, name, floor_code)
+        `)
+        .in('design_no', designNos)
+        .in('vendor', vendorIds)
+        .eq('status', 'active');
+
+      if (batchesError) throw batchesError;
+
+      // 6. Fetch Defective Stock
+      const barcodes = (batches || []).map(b => b.barcode_alias_8digit);
+      let defectiveData: any[] = [];
+      if (barcodes.length > 0) {
+        const { data: defData, error: defError } = await supabase
           .from('defective_stock')
-          .select('*'),
-        supabase
-          .from('floors')
           .select('*')
-          .eq('active', true),
-        supabase
-          .from('product_masters')
-          .select(`
-            *,
-            product_group:product_groups(id, name, group_code),
-            color:colors(id, name, color_code),
-            vendor:vendors(id, name, vendor_code),
-            floor:floors(id, name, floor_code)
-          `)
-          .order('created_at', { ascending: false }),
-      ]);
+          .in('barcode', barcodes);
+        if (defError) throw defError;
+        defectiveData = defData || [];
+      }
 
-      if (batchesRes.error) throw batchesRes.error;
+      // 7. Group and Merge
+      const grouped = groupItemsByDesignVendor(batches || [], defectiveData);
 
-      setFloors(floorsRes.data || []);
-      const grouped = groupItemsByDesignVendor(batchesRes.data || [], defectiveRes.data || []);
-
-      const getBatchKey = (b: any) => {
-        const vendorId = typeof b.vendor === 'object' ? b.vendor?.id : b.vendor;
-        const pgId = typeof b.product_group === 'object' ? b.product_group?.id : b.product_group;
-        const colorId = typeof b.color === 'object' ? b.color?.id : b.color;
-        return `${b.design_no}||${vendorId || ''}||${pgId || ''}||${colorId || ''}`;
-      };
-
-      // Build a set of SKU keys (design+vendor+group+color) already covered by barcode_batches
-      const batchKeys = new Set((batchesRes.data || []).map(getBatchKey));
-
-      // Merge product_masters that have no matching barcode batch as 0-stock items
-      const masterItems: GroupedItem[] = (mastersRes.data || []).reduce((acc: GroupedItem[], pm: any) => {
+      const masterItems: GroupedItem[] = uniqueMasters.reduce((acc: GroupedItem[], pm: any) => {
         const key = getBatchKey(pm);
-        if (!batchKeys.has(key)) {
+        const existing = grouped.find(g => getBatchKey(g) === key);
+        if (existing) {
+          if ((!existing.images || existing.images.length === 0) && pm.photos && pm.photos.length > 0) {
+            existing.images = pm.photos;
+          }
+          if (existing.cost === 0 && pm.cost_actual > 0) {
+            existing.cost = pm.cost_actual;
+          }
+        } else {
           acc.push({
             design_no: pm.design_no,
             vendor_name: pm.vendor?.name || 'Unknown',
@@ -127,7 +338,7 @@ export default function Inventory() {
             total_quantity: 0,
             total_defective: 0,
             mrp: pm.mrp || 0,
-            cost: 0,
+            cost: pm.cost_actual || 0,
             order_number: null,
             gst_logic: pm.gst_logic || 'AUTO_5_18',
             mrp_markup_percent: pm.mrp_markup_percent || 100,
@@ -138,11 +349,209 @@ export default function Inventory() {
         return acc;
       }, []);
 
-      setGroupedItems([...grouped, ...masterItems]);
-    } catch (error) {
-      console.error('Error loading inventory:', error);
+      const finalItems = [...grouped, ...masterItems];
+      updateImageStore(finalItems);
+
+      if (page === currentPage && searchTerm === currentSearch) {
+        setGroupedItems(finalItems);
+      }
+
+      // Save to cache (full page for quick lookup) - STRIP IMAGES
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({
+          data: stripImages(finalItems),
+          total: count || 0,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        console.warn('Failed to save to inventory cache (possibly full)', e);
+      }
+
+      // Start background sync if not already syncing and doing initial load
+      if (!searchTerm) {
+        const globalCached = localStorage.getItem(GLOBAL_CACHE_KEY);
+        let shouldSync = true;
+        if (globalCached) {
+          try {
+            const { timestamp } = JSON.parse(globalCached);
+            // Only sync if cache is older than 5 minutes
+            if (Date.now() - timestamp < CACHE_TTL / 3) shouldSync = false;
+          } catch (e) {}
+        }
+        if (shouldSync) syncInventory();
+      }
+    } catch (err: any) {
+      console.error('Error loading inventory:', err);
+      setError(err.message || 'Failed to load inventory');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const syncInventory = async () => {
+    if (isSyncing) return;
+    
+    // Check if global cache is still fresh enough to skip sync
+    const globalCached = localStorage.getItem(GLOBAL_CACHE_KEY);
+    if (globalCached) {
+      try {
+        const { timestamp } = JSON.parse(globalCached);
+        if (Date.now() - timestamp < CACHE_TTL / 3) return; // Only sync every 5 mins
+      } catch (e) {}
+    }
+
+    setIsSyncing(true);
+    console.log('Starting background inventory sync...');
+
+    try {
+      let allGrouped: GroupedItem[] = [];
+      let offset = 0;
+      const syncBatchSize = 20; // Smaller batches for faster "pop-in"
+      let hasMore = true;
+
+
+      while (hasMore) {
+        const { data: masters, error: mastersError } = await supabase
+          .from('product_masters')
+          .select(`
+            *,
+            product_group:product_groups(id, name, group_code),
+            color:colors(id, name, color_code),
+            vendor:vendors(id, name, vendor_code)
+          `)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + syncBatchSize - 1);
+
+        if (mastersError) throw mastersError;
+        if (!masters || masters.length === 0) break;
+
+        const designNos = Array.from(new Set(masters.map(m => m.design_no)));
+        const vendorIds = Array.from(new Set(masters.map(m => m.vendor?.id).filter(Boolean)));
+
+        const { data: batches, error: batchesError } = await supabase
+          .from('barcode_batches')
+          .select(`
+            *,
+            product_group:product_groups(id, name, group_code),
+            color:colors(id, name, color_code),
+            size:sizes(id, name, size_code),
+            vendor:vendors(id, name, vendor_code),
+            floor:floors(id, name, floor_code)
+          `)
+          .in('design_no', designNos)
+          .in('vendor', vendorIds)
+          .eq('status', 'active');
+
+        if (batchesError) throw batchesError;
+
+        const barcodes = (batches || []).map(b => b.barcode_alias_8digit);
+        let defectiveData: any[] = [];
+        if (barcodes.length > 0) {
+          const { data: defData } = await supabase
+            .from('defective_stock')
+            .select('*')
+            .in('barcode', barcodes);
+          defectiveData = defData || [];
+        }
+
+        const uniqueMastersMap: { [key: string]: any } = {};
+        masters.forEach(m => {
+          const key = getBatchKey(m);
+          if (!uniqueMastersMap[key]) {
+            uniqueMastersMap[key] = m;
+          } else if (m.photos && m.photos.length > 0 && (!uniqueMastersMap[key].photos || uniqueMastersMap[key].photos.length === 0)) {
+            uniqueMastersMap[key].photos = m.photos;
+          }
+        });
+        const uniqueMasters = Object.values(uniqueMastersMap);
+
+        const grouped = groupItemsByDesignVendor(batches || [], defectiveData);
+
+        const masterItems: GroupedItem[] = uniqueMasters.reduce((acc: GroupedItem[], pm: any) => {
+          const key = getBatchKey(pm);
+          const existing = grouped.find(g => getBatchKey(g) === key);
+          if (existing) {
+            if ((!existing.images || existing.images.length === 0) && pm.photos && pm.photos.length > 0) {
+              existing.images = pm.photos;
+            }
+          } else {
+            acc.push({
+              design_no: pm.design_no,
+              vendor_name: pm.vendor?.name || 'Unknown',
+              vendor_code: pm.vendor?.vendor_code || '',
+              vendor_id: pm.vendor?.id || '',
+              product_group_name: pm.product_group?.name || '',
+              product_group_id: pm.product_group?.id || '',
+              color_name: pm.color?.name || '',
+              color_id: pm.color?.id || '',
+              description: pm.description || '',
+              images: pm.photos || [],
+              sizes: [],
+              total_available: 0,
+              total_quantity: 0,
+              total_defective: 0,
+              mrp: pm.mrp || 0,
+              cost: pm.cost_actual || 0,
+              order_number: null,
+              gst_logic: pm.gst_logic || 'AUTO_5_18',
+              mrp_markup_percent: pm.mrp_markup_percent || 100,
+              hsn_code: pm.hsn_code || '',
+              from_product_master: true,
+            });
+          }
+          return acc;
+        }, []);
+
+        // Add newly processed unique items to allGrouped, avoiding duplicates from previous batches
+        const newBatchItems = [...grouped, ...masterItems];
+        newBatchItems.forEach(newItem => {
+          const key = getBatchKey(newItem);
+          const existingInAll = allGrouped.find(exp => getBatchKey(exp) === key);
+          if (!existingInAll) {
+            allGrouped.push(newItem);
+          } else {
+            // Merge images if missing in existing
+            if ((!existingInAll.images || existingInAll.images.length === 0) && newItem.images && newItem.images.length > 0) {
+              existingInAll.images = newItem.images;
+            }
+          }
+        });
+        
+        offset += syncBatchSize;
+        hasMore = masters.length === syncBatchSize;
+
+        updateImageStore(newBatchItems);
+
+        // REACTIVE RE-RENDER: If any items on the CURRENT page were just fetched, update state
+        setGroupedItems(currentItems => {
+          const { hydrated, missingTotal } = hydrateImages(currentItems);
+          const currentMissing = currentItems.filter(i => !i.images || i.images.length === 0).length;
+          // Only update state if images were actually found/populated
+          return missingTotal < currentMissing ? hydrated : currentItems;
+        });
+
+        // Small delay to keep UI snappy and network free for user actions
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      console.log(`Background sync complete. Found ${allGrouped.length} unique items.`);
+      
+      // FINALLY save to global cache once complete
+      try {
+        localStorage.setItem(GLOBAL_CACHE_KEY, JSON.stringify({
+          data: stripImages(allGrouped),
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        console.warn('Global cache quota exceeded', e);
+      }
+
+      // Update totalCount to the actual unique total found during sync
+      if (allGrouped.length > 0) setTotalCount(allGrouped.length);
+    } catch (err) {
+      console.error('Background sync failed:', err);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -150,7 +559,7 @@ export default function Inventory() {
     const groupMap: { [key: string]: any } = {};
 
     items.forEach((item) => {
-      const key = `${item.design_no}-${item.vendor?.vendor_code || 'UNKNOWN'}-${item.product_group?.id}-${item.color?.id}`;
+      const key = getBatchKey(item);
 
       if (!groupMap[key]) {
         groupMap[key] = {
@@ -345,8 +754,16 @@ export default function Inventory() {
       }
 
       setSuccess('Inventory updated successfully!');
+      
+      // Clear all caches on edit to ensure fresh data
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('inventory_cache_') || key === GLOBAL_CACHE_KEY) {
+          localStorage.removeItem(key);
+        }
+      });
+
       setEditingItem(null);
-      await loadInventory();
+      await loadInventory(currentPage, true);
 
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
@@ -399,37 +816,39 @@ export default function Inventory() {
     });
   };
 
-  const filteredItems = groupedItems.filter((item) => {
-    const searchLower = searchTerm.toLowerCase();
-    return (
-      item.design_no.toLowerCase().includes(searchLower) ||
-      item.product_group_name.toLowerCase().includes(searchLower) ||
-      item.color_name.toLowerCase().includes(searchLower) ||
-      item.vendor_name.toLowerCase().includes(searchLower) ||
-      item.vendor_code.toLowerCase().includes(searchLower) ||
-      item.description.toLowerCase().includes(searchLower) ||
-      (item.order_number && item.order_number.toLowerCase().includes(searchLower)) ||
-      item.sizes.some(s => s.barcode_8digit.toLowerCase().includes(searchLower))
-    );
-  });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center">
           <Package className="w-8 h-8 text-emerald-600 mr-3" />
           <div>
             <h1 className="text-3xl font-bold text-gray-800">Inventory</h1>
-            <p className="text-sm text-gray-600">Real-time stock from barcode batches</p>
+            <div className="flex gap-2 mt-1">
+              <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
+                Master Records: {totalCount}
+              </span>
+              <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">
+                Visible Variations: {totalCount > 400 ? 'Syncing...' : 'Live'}
+              </span>
+            </div>
           </div>
         </div>
-        <button
-          onClick={loadInventory}
-          className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition flex items-center shadow-md"
-        >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-4">
+          {isSyncing && (
+            <div className="flex items-center text-emerald-600 animate-pulse">
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              <span className="text-xs font-medium">Syncing...</span>
+            </div>
+          )}
+          <button
+            onClick={() => loadInventory(currentPage, true)}
+            className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition flex items-center shadow-md"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-lg p-6">
@@ -440,16 +859,47 @@ export default function Inventory() {
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  setCurrentPage(1);
+                  loadInventory(1);
+                }
+              }}
               className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-              placeholder="Search by design, vendor, product, color, order number..."
+              placeholder="Search by design or description and press Enter..."
             />
           </div>
         </div>
 
-        <div className="mb-4">
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-500 text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="mb-4 flex items-center justify-between">
           <p className="text-sm text-gray-600">
-            Showing <span className="font-bold text-emerald-700">{filteredItems.length}</span> unique items • Total Available: <span className="font-bold text-emerald-700">{filteredItems.reduce((sum, item) => sum + item.total_available, 0)}</span>
+            Showing <span className="font-bold text-emerald-700">{groupedItems.length}</span> unique items on this page • Total Unique Designs: <span className="font-bold text-emerald-700">{totalCount}</span>
           </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1 || loading}
+              className="px-3 py-1 border-2 border-gray-200 rounded-lg hover:border-emerald-500 disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span className="px-3 py-1 bg-emerald-50 text-emerald-700 font-bold rounded-lg border-2 border-emerald-200">
+              Page {currentPage} of {Math.ceil(totalCount / pageSize)}
+            </span>
+            <button
+              onClick={() => setCurrentPage(p => p + 1)}
+              disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading}
+              className="px-3 py-1 border-2 border-gray-200 rounded-lg hover:border-emerald-500 disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -458,7 +908,7 @@ export default function Inventory() {
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredItems.map((item, idx) => (
+            {groupedItems.map((item, idx) => (
               <div
                 key={`${item.design_no}-${item.vendor_code}-${idx}`}
                 className={`border-2 rounded-lg p-4 hover:shadow-lg transition ${
@@ -471,12 +921,12 @@ export default function Inventory() {
               >
                 <div className="flex gap-4">
                   <div className="flex-shrink-0 w-32 h-32 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center">
-                    {item.images && item.images.length > 0 ? (
+                    {item.images && (Array.isArray(item.images) ? item.images.length > 0 : !!item.images) ? (
                       <img
-                        src={item.images[0]}
+                        src={Array.isArray(item.images) ? item.images[0] : item.images}
                         alt={item.design_no}
                         className="w-full h-full object-cover cursor-pointer hover:opacity-80"
-                        onClick={() => setSelectedImage(item.images[0])}
+                        onClick={() => setSelectedImage(Array.isArray(item.images) ? item.images[0] : item.images)}
                         onError={(e) => {
                           e.currentTarget.src = '';
                           e.currentTarget.style.display = 'none';
@@ -484,8 +934,15 @@ export default function Inventory() {
                         }}
                       />
                     ) : (
-                      <div className="text-gray-400">
+                      <div className="text-gray-400 flex flex-col items-center">
                         <ImageIcon className="w-12 h-12" />
+                        <div className="text-[9px] font-bold text-center mt-1">
+                          Photos: {item.images?.length || 0}
+                          {item.images && item.images.length > 0 && typeof item.images[0] !== 'string' && (
+                            <div className="text-red-500 font-bold">Invalid Format</div>
+                          )}
+                          {item.from_product_master && <div className="text-blue-500">(Master)</div>}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -610,7 +1067,7 @@ export default function Inventory() {
               </div>
             ))}
 
-            {filteredItems.length === 0 && (
+            {groupedItems.length === 0 && (
               <div className="py-12 text-center text-gray-500">
                 <Package className="w-16 h-16 mx-auto mb-4 text-gray-300" />
                 <p className="text-lg">No items found</p>

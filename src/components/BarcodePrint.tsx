@@ -527,7 +527,7 @@ export default function BarcodePrint() {
         height: ${size.height};
         border-bottom: 2px solid #000;
         padding: ${size.padding};
-        padding-bottom: 1.5mm;
+        padding-bottom: 3mm;
         margin: 0;
         page-break-before: always;
         page-break-inside: avoid;
@@ -541,19 +541,19 @@ export default function BarcodePrint() {
         overflow: hidden;
         color: #000;
       ">
-        <div style="text-align: center; width: 100%; margin-bottom: 0.5mm;">
+        <div style="text-align: center; width: 100%; margin-bottom: 0.2mm;">
           <strong style="font-weight: 900; font-size: calc(${size.fontSize} + 1pt); text-transform: uppercase; line-height: 1.1;">${topLine}</strong>
         </div>
-        <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: ${size.fontSize}; font-weight: 800; letter-spacing: 0.3px; width: 100%; line-height: 1.1; margin-bottom: 0.5mm;">
+        <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: ${size.fontSize}; font-weight: 800; letter-spacing: 0.3px; width: 100%; line-height: 1.1; margin-bottom: 0.2mm;">
           ${secondLine}
         </div>
-        <div style="text-align: center; width: 100%; line-height: 0; margin-bottom: 0.5mm;">
+        <div style="text-align: center; width: 100%; line-height: 0; margin-bottom: 0.2mm;">
           <img src="${barcodeDataURL}" style="width: 98%; height: ${size.barcodeImgHeight}; display: block; margin: 0 auto; object-fit: fill;" alt="Barcode" />
         </div>
         <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: ${size.fontSize}; font-weight: 900; letter-spacing: 1px; width: 100%; line-height: 1.1;">
           ${item.barcode_id || ''}
         </div>
-        <div style="text-align: center; border-top: 1.5px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1pt); font-weight: 900; padding-top: 1mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px; line-height: 1.1; margin-top: auto;">
+        <div style="text-align: center; border-top: 1.5px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1pt); font-weight: 900; padding-top: 1.5mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px; line-height: 1.1; margin-top: auto;">
           <span style="white-space: nowrap;">SIZE: ${(item.size?.name || '').toUpperCase()}</span>
           <span style="font-weight: 400; opacity: 0.7;">|</span>
           <span style="white-space: nowrap;">MRP: \u20B9${finalPrice.toFixed(0)}</span>

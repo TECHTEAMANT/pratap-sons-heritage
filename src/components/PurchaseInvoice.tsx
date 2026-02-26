@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { FileText, Plus, Trash2, Save, Upload, Printer, Edit2, Eye, X, Pencil } from 'lucide-react';
+import { FileText, Plus, Trash2, Save, Upload, Printer, Edit2, Eye, X, Pencil, Search } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -52,6 +52,21 @@ interface BarcodePreview {
 }
 
 export default function PurchaseInvoice() {
+  const GLOBAL_CACHE_KEY = 'purchase_invoices_global_cache';
+  const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+  const [allInvoices, setAllInvoices] = useState<any[]>(() => {
+    const cached = localStorage.getItem(GLOBAL_CACHE_KEY);
+    if (cached) {
+      try {
+        const { data, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < CACHE_TTL) return data;
+      } catch (e) {}
+    }
+    return [];
+  });
+
+  const [searchTerm, setSearchTerm] = useState('');
   const [vendors, setVendors] = useState<any[]>([]);
   const [productGroups, setProductGroups] = useState<any[]>([]);
   const [colors, setColors] = useState<any[]>([]);
@@ -100,7 +115,6 @@ export default function PurchaseInvoice() {
   const [showVendorModal, setShowVendorModal] = useState(false);
 
   // List View State
-  const [invoices, setInvoices] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
   const [originalInvoiceQuantities, setOriginalInvoiceQuantities] = useState<Record<string, number>>({});
@@ -108,6 +122,28 @@ export default function PurchaseInvoice() {
   const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<any[]>([]);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [totalInvoicesCount, setTotalInvoicesCount] = useState(0);
+
+  // Derived state for the filtered and paged view
+  const filteredInvoices = allInvoices.filter(inv => {
+    const search = searchTerm.toLowerCase();
+    return (
+      inv.po_number?.toLowerCase().includes(search) ||
+      inv.vendor?.name?.toLowerCase().includes(search) ||
+      inv.vendor?.vendor_code?.toLowerCase().includes(search) ||
+      inv.invoice_number?.toLowerCase().includes(search) ||
+      inv.total_amount?.toString().includes(search) ||
+      new Date(inv.order_date).toLocaleDateString().includes(search) ||
+      inv.order_date?.includes(search)
+    );
+  });
+
+  const pagedInvoices = filteredInvoices.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  );
 
   const handlePrintBarcodes = () => {
     const poId = savedPOId || selectedInvoice?.id;
@@ -125,7 +161,18 @@ export default function PurchaseInvoice() {
   }, []);
 
   const loadInvoices = async () => {
-    setLoadingInvoices(true);
+    // If we have some invoices already (from global cache), don't show full-screen loader
+    if (allInvoices.length === 0) setLoadingInvoices(true);
+    
+    try {
+      // Background sync
+      syncInvoices();
+    } finally {
+      setLoadingInvoices(false);
+    }
+  };
+
+  const syncInvoices = async () => {
     try {
       const { data, error } = await supabase
         .from('purchase_orders')
@@ -134,13 +181,32 @@ export default function PurchaseInvoice() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setInvoices(data || []);
+      
+      if (data) {
+        setAllInvoices(data);
+        setTotalInvoicesCount(data.length);
+        localStorage.setItem(GLOBAL_CACHE_KEY, JSON.stringify({
+          data,
+          timestamp: Date.now()
+        }));
+      }
     } catch (err) {
-      console.error('Error loading invoices:', err);
-    } finally {
-      setLoadingInvoices(false);
+      console.error('Error syncing invoices:', err);
     }
   };
+
+  useEffect(() => {
+    loadInvoices();
+  }, []);
+
+  // Set total count based on filtered results
+  useEffect(() => {
+    setTotalInvoicesCount(filteredInvoices.length);
+  }, [filteredInvoices.length]);
+
+  useEffect(() => {
+    // No need to reload from DB on page change now, it's local
+  }, [currentPage]);
 
   const fetchInvoiceItems = async (poId: string) => {
     const { data, error } = await supabase
@@ -749,6 +815,49 @@ export default function PurchaseInvoice() {
             </Button>
           </div>
 
+          <div className="flex flex-col md:flex-row items-center justify-between mb-4 bg-gray-50 p-4 rounded-lg gap-4">
+            <div className="relative w-full md:w-96">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <input
+                type="text"
+                placeholder="Search invoices (No, Vendor, Invoice #, Amount, Date)..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentPage(1); // Reset to page 1 on search
+                }}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            
+            <div className="flex items-center gap-4">
+              <div className="text-sm text-gray-600 font-medium">
+                Total: <span className="text-emerald-700 font-bold">{totalInvoicesCount}</span> invoices
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1 || loadingInvoices}
+                >
+                  Previous
+                </Button>
+                <div className="px-3 py-1 bg-white border border-gray-200 rounded text-sm font-semibold">
+                  {currentPage} / {Math.ceil(totalInvoicesCount / pageSize) || 1}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => prev + 1)}
+                  disabled={currentPage >= Math.ceil(totalInvoicesCount / pageSize) || loadingInvoices}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -766,24 +875,24 @@ export default function PurchaseInvoice() {
               <tbody>
                 {loadingInvoices ? (
                    <tr><td colSpan={8} className="p-8 text-center text-gray-500">Loading invoices...</td></tr>
-                ) : invoices.length === 0 ? (
+                ) : pagedInvoices.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-8 text-center text-gray-500">
-                      No invoices found. Click "New Invoice" to create one.
+                      {searchTerm ? 'No invoices match your search.' : 'No invoices found.'}
                     </td>
                   </tr>
                 ) : (
-                  invoices.map((inv) => (
-                    <tr key={inv.id} className="border-b hover:bg-gray-50">
-                      <td className="p-4 text-sm font-semibold text-emerald-600">{inv.po_number}</td>
-                      <td className="p-4 text-sm text-gray-700">
-                        {inv.vendor?.name}
-                        <div className="text-xs text-gray-500">{inv.vendor?.vendor_code}</div>
+                  pagedInvoices.map((inv) => (
+                    <tr key={inv.id} className="border-b hover:bg-gray-50 transition-colors">
+                      <td className="p-4 text-sm font-bold text-emerald-600">{inv.po_number}</td>
+                      <td className="p-4">
+                        <div className="text-sm font-bold text-gray-800">{inv.vendor?.name}</div>
+                        <div className="text-xs text-gray-500 font-medium">{inv.vendor?.vendor_code}</div>
                       </td>
-                      <td className="p-4 text-sm text-gray-700">{new Date(inv.order_date).toLocaleDateString()}</td>
-                      <td className="p-4 text-sm text-gray-700">{inv.invoice_number}</td>
-                      <td className="p-4 text-sm text-gray-700">{inv.total_items}</td>
-                      <td className="p-4 text-sm font-semibold text-gray-700">₹{(inv.total_amount || 0).toFixed(2)}</td>
+                      <td className="p-4 text-sm text-gray-600">{new Date(inv.order_date).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' })}</td>
+                      <td className="p-4 text-sm text-gray-600 font-medium">{inv.invoice_number}</td>
+                      <td className="p-4 text-sm text-gray-600 font-bold">{inv.total_items}</td>
+                      <td className="p-4 text-sm font-bold text-gray-800">₹{Math.round(inv.total_amount || 0).toLocaleString('en-IN')}</td>
                       <td className="p-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
                           inv.status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
@@ -1215,7 +1324,7 @@ export default function PurchaseInvoice() {
       const freightAmt = parseFloat(ledgerFreight) || 0;
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
       const finalGST = calculatedGST;
-      const grandTotal = itemsTotal - discountAmt + freightAmt + finalGST;
+      const grandTotal = Math.round(itemsTotal - discountAmt + freightAmt + finalGST);
 
       const { data: po, error: poError } = await supabase
         .from('purchase_orders')
@@ -1560,7 +1669,7 @@ export default function PurchaseInvoice() {
       const freightAmt = parseFloat(ledgerFreight) || 0;
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
       const finalGST = calculatedGST;
-      const grandTotal = itemsTotal - discountAmt + freightAmt + finalGST;
+      const grandTotal = Math.round(itemsTotal - discountAmt + freightAmt + finalGST);
 
       const { error: poUpdateError } = await supabase
         .from('purchase_orders')
