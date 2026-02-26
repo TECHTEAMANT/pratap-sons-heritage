@@ -1250,17 +1250,25 @@ export default function PurchaseInvoice() {
         // Ensure the design is saved to product_masters if it's new, or updated if hsn changed
         const { data: existingMaster } = await supabase
           .from('product_masters')
-          .select('id, photos, hsn_code')
+          .select('id, photos, hsn_code, mrp')
           .eq('design_no', item.design_no)
           .eq('vendor', selectedVendor)
           .maybeSingle();
 
         if (existingMaster) {
-          // Update HSN if it's different (to reflect latest manual override)
+          // Update HSN and MRP if they're different
+          const updateData: any = {};
           if (item.hsn_code && item.hsn_code !== existingMaster.hsn_code) {
+            updateData.hsn_code = item.hsn_code;
+          }
+          if (item.mrp && item.mrp !== existingMaster.mrp) {
+            updateData.mrp = item.mrp;
+          }
+          
+          if (Object.keys(updateData).length > 0) {
             await supabase
               .from('product_masters')
-              .update({ hsn_code: item.hsn_code })
+              .update(updateData)
               .eq('id', existingMaster.id);
           }
         } else {
@@ -1583,17 +1591,25 @@ export default function PurchaseInvoice() {
         // Ensure the design is saved to product_masters if it's new, or updated if hsn changed
         const { data: existingMaster } = await supabase
           .from('product_masters')
-          .select('id, photos, hsn_code')
+          .select('id, photos, hsn_code, mrp')
           .eq('design_no', item.design_no)
           .eq('vendor', selectedVendor)
           .maybeSingle();
 
         if (existingMaster) {
-          // Update HSN if it's different (to reflect latest manual override)
+          // Update HSN and MRP if they're different
+          const updateData: any = {};
           if (item.hsn_code && item.hsn_code !== existingMaster.hsn_code) {
+            updateData.hsn_code = item.hsn_code;
+          }
+          if (item.mrp && item.mrp !== existingMaster.mrp) {
+            updateData.mrp = item.mrp;
+          }
+          
+          if (Object.keys(updateData).length > 0) {
             await supabase
               .from('product_masters')
-              .update({ hsn_code: item.hsn_code })
+              .update(updateData)
               .eq('id', existingMaster.id);
           }
         } else {
@@ -1672,7 +1688,7 @@ export default function PurchaseInvoice() {
 
         let query = supabase
           .from('barcode_batches')
-          .select('id, total_quantity, available_quantity, floor, photos, payout_code')
+          .select('id, total_quantity, available_quantity, floor, photos, payout_code, barcode_alias_8digit')
           .eq('design_no', designNo)
           .eq('product_group', productGroupId)
           .eq('size', sizeId)
@@ -1711,6 +1727,10 @@ export default function PurchaseInvoice() {
           };
 
           if (itemForCombo) {
+            const vendorRow = vendors.find(v => v.id === vendorId);
+            const productGroup = productGroups.find(pg => pg.id === productGroupId);
+            const color = colors.find(c => c.id === colorId);
+
             updatePayload.cost_actual = itemForCombo.cost_per_item;
             updatePayload.mrp = itemForCombo.mrp;
             updatePayload.mrp_markup_percent = itemForCombo.mrp_markup_percent;
@@ -1722,6 +1742,7 @@ export default function PurchaseInvoice() {
             updatePayload.po_id = editingInvoiceId;
             updatePayload.description = itemForCombo.description;
             updatePayload.order_number = itemForCombo.order_number || null;
+            updatePayload.hsn_code = itemForCombo.hsn_code;
             updatePayload.photos = itemForCombo.image_url
               ? [itemForCombo.image_url]
               : existingBatch.photos || [];
@@ -1729,6 +1750,20 @@ export default function PurchaseInvoice() {
             
             const barcodesPerItem = Math.max(1, Number(itemForCombo.barcodes_per_item) || 1);
             updatePayload.print_quantity = newQty * barcodesPerItem;
+
+            // Recalculate barcode_structured if MRP or other details changed
+            const groupCode = productGroup?.group_code || 'PG';
+            const colorCode = color?.color_code || '';
+            const designPart = colorCode ? `${designNo}-${colorCode}` : designNo;
+            const encodedPrice = encodeCostForVendor(itemForCombo.mrp, 'CRAZY WOMEN');
+            const structuredParts = [
+              groupCode,
+              designPart,
+              vendorRow?.vendor_code || 'VND',
+              encodedPrice,
+              existingBatch.barcode_alias_8digit,
+            ].filter(Boolean);
+            updatePayload.barcode_structured = structuredParts.join('-');
           }
 
           const { error: updateBatchError } = await supabase
