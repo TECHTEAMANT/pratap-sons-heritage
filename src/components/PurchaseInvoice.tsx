@@ -247,8 +247,14 @@ export default function PurchaseInvoice() {
       const vendorForInvoice = vendorId || selectedVendor;
       const grouped: Record<string, PurchaseItem> = {};
 
+      // Fetch masters to get images
+      const { data: masters } = await supabase
+        .from('product_masters')
+        .select('design_no, product_group, color, photos')
+        .eq('vendor', vendorForInvoice);
+
       dbItems.forEach((row: any) => {
-        // Group by design, group, color, cost, mrp, markup, gst_logic, desc, order_no, hsn
+        // ...
         const groupKey = [
           row.design_no || '',
           row.product_group?.id || row.product_group || '',
@@ -265,20 +271,29 @@ export default function PurchaseInvoice() {
         let existing = grouped[groupKey];
 
         if (!existing) {
+          const rowGroupId = row.product_group?.id || row.product_group;
+          const rowColorId = row.color?.id || row.color;
+          
+          const master = (masters || []).find(m => 
+            m.design_no === row.design_no && 
+            (m.product_group?.id || m.product_group) === rowGroupId &&
+            (m.color?.id || m.color || null) === (rowColorId || null)
+          );
+
           existing = {
             design_no: row.design_no,
-            product_group: row.product_group?.id || row.product_group,
+            product_group: rowGroupId,
             floor_id: row.floor_id || '',
-            color: row.color?.id || row.color || '',
+            color: rowColorId || '',
             sizes: [],
             cost_per_item: row.cost_per_item,
             mrp_markup_percent: row.mrp_markup_percent,
             mrp: row.mrp,
             gst_logic: row.gst_logic,
-            image_url: '', // Image URL not stored in purchase_items usually, but from master
+            image_url: master?.photos?.[0] || '', 
             description: row.description || '',
             order_number: row.order_number || '',
-            barcodes_per_item: 1, // Default
+            barcodes_per_item: row.barcodes_per_item || 1,
             payout_code: '',
             hsn_code: row.hsn_code || '',
           };
@@ -288,7 +303,7 @@ export default function PurchaseInvoice() {
         existing.sizes.push({
           size: row.size?.id || row.size,
           quantity: row.quantity,
-          print_quantity: row.quantity,
+          print_quantity: row.quantity * (row.barcodes_per_item || 1),
         });
 
         if (vendorForInvoice) {
@@ -1288,6 +1303,7 @@ export default function PurchaseInvoice() {
               description: item.description,
               order_number: item.order_number || null,
               hsn_code: item.hsn_code,
+              barcodes_per_item: item.barcodes_per_item || 1,
             }]);
 
           if (itemError) throw itemError;
@@ -1631,6 +1647,13 @@ export default function PurchaseInvoice() {
       }
 
       const newMap = computeQuantitiesFromItems(selectedVendor, items);
+      // 1. Clear po_id from all batches currently linked to this invoice.
+      // This ensures that only the items we process below will remain linked.
+      await supabase
+        .from('barcode_batches')
+        .update({ po_id: null })
+        .eq('po_id', editingInvoiceId);
+
       const allKeys = new Set([...Object.keys(originalMap), ...Object.keys(newMap)]);
 
       for (const key of allKeys) {
@@ -1645,7 +1668,7 @@ export default function PurchaseInvoice() {
         const newQty = newMap[key] || 0;
         const delta = newQty - oldQty;
 
-        if (!delta) continue;
+        if (delta === 0 && newQty === 0) continue;
 
         let query = supabase
           .from('barcode_batches')
@@ -1703,6 +1726,9 @@ export default function PurchaseInvoice() {
               ? [itemForCombo.image_url]
               : existingBatch.photos || [];
             updatePayload.payout_code = itemForCombo.payout_code || existingBatch.payout_code || null;
+            
+            const barcodesPerItem = Math.max(1, Number(itemForCombo.barcodes_per_item) || 1);
+            updatePayload.print_quantity = newQty * barcodesPerItem;
           }
 
           const { error: updateBatchError } = await supabase
@@ -1711,7 +1737,8 @@ export default function PurchaseInvoice() {
             .eq('id', existingBatch.id);
 
           if (updateBatchError) throw updateBatchError;
-        } else if (delta > 0 && itemForCombo) {
+        } else if (newQty > 0 && itemForCombo) {
+          // If no existing batch found but item is in invoice, create a NEW one
           const productGroup = productGroups.find(pg => pg.id === itemForCombo.product_group);
           const color = colors.find(c => c.id === itemForCombo.color);
           const vendorRow = vendors.find(v => v.id === vendorId);
@@ -1737,8 +1764,8 @@ export default function PurchaseInvoice() {
               ? itemForCombo.floor_id
               : productGroup?.floor_id || null;
 
-          const qtyForSize =
-            (itemForCombo.sizes || []).find(sq => sq.size === sizeId)?.print_quantity ?? delta;
+          const barcodesPerItem = Math.max(1, Number(itemForCombo.barcodes_per_item) || 1);
+          const qtyForSize = newQty * barcodesPerItem;
 
           const { error: insertBatchError } = await supabase
             .from('barcode_batches')
@@ -1797,6 +1824,7 @@ export default function PurchaseInvoice() {
               description: item.description,
               order_number: item.order_number || null,
               hsn_code: item.hsn_code,
+              barcodes_per_item: item.barcodes_per_item || 1,
             }]);
 
           if (itemError) throw itemError;
