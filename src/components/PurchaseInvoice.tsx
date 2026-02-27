@@ -208,6 +208,33 @@ export default function PurchaseInvoice() {
     // No need to reload from DB on page change now, it's local
   }, [currentPage]);
 
+  const resetAllStates = () => {
+    setSelectedVendor('');
+    setOrderDate(new Date().toISOString().split('T')[0]);
+    setVendorInvoiceNumber('');
+    setVendorInvoiceDate(new Date().toISOString().split('T')[0]);
+    setNotes('');
+    setItems([]);
+    setTaxableValue('');
+    setCalculatedGST(0);
+    setGstType('CGST_SGST');
+    setLedgerDiscount('');
+    setLedgerFreight('');
+    setLedgerFreightGstRate(5);
+    setInvoiceAttachment('');
+    setInvoiceFileName('');
+    setSavedPOId(null);
+    setSourcePOId(null);
+    setPoNumberInput('');
+    setVendorPOs([]);
+    setShowItemForm(false);
+    setEditingIndex(null);
+    setEditingInvoiceId(null);
+    setOriginalInvoiceQuantities({});
+    setError('');
+    setSuccess('');
+  };
+
   const fetchInvoiceItems = async (poId: string) => {
     const { data, error } = await supabase
       .from('purchase_items')
@@ -366,11 +393,20 @@ export default function PurchaseInvoice() {
           grouped[groupKey] = existing;
         }
 
-        existing.sizes.push({
-          size: row.size?.id || row.size,
-          quantity: row.quantity,
-          print_quantity: row.quantity * (row.barcodes_per_item || 1),
-        });
+        const rowSizeId = row.size?.id || row.size;
+        const existingSizeIndex = (existing?.sizes || []).findIndex(s => s.size === rowSizeId);
+        const rowQty = parseInt(String(row.quantity)) || 0;
+        
+        if (existing && existingSizeIndex > -1) {
+          existing.sizes[existingSizeIndex].quantity += rowQty;
+          existing.sizes[existingSizeIndex].print_quantity += rowQty * (row.barcodes_per_item || 1);
+        } else if (existing) {
+          existing.sizes.push({
+            size: rowSizeId,
+            quantity: rowQty,
+            print_quantity: rowQty * (row.barcodes_per_item || 1),
+          });
+        }
 
         if (vendorForInvoice) {
           const qtyKey = [
@@ -380,8 +416,8 @@ export default function PurchaseInvoice() {
             row.color?.id || row.color || '',
             row.size?.id || row.size || '',
           ].join('__');
-
-          quantities[qtyKey] = (quantities[qtyKey] || 0) + (row.quantity || 0);
+          const rowQty = parseInt(String(row.quantity)) || 0;
+          quantities[qtyKey] = (quantities[qtyKey] || 0) + rowQty;
         }
       });
 
@@ -807,7 +843,10 @@ export default function PurchaseInvoice() {
               <h2 className="text-3xl font-bold text-gray-800">Purchase Invoices</h2>
             </div>
             <Button
-              onClick={() => setShowForm(true)}
+              onClick={() => {
+                resetAllStates();
+                setShowForm(true);
+              }}
               className="px-6 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center shadow-lg"
             >
               <Plus className="w-5 h-5 mr-2" />
@@ -1075,6 +1114,7 @@ export default function PurchaseInvoice() {
   const handleExistingDesignSelect = (designId: string) => {
     const design = existingDesigns.find(d => d.id === designId);
     if (design) {
+      const barcodesPerItem = design.barcodes_per_item || 1;
       setCurrentItem({
         design_no: design.design_no,
         product_group: design.product_group?.id || '',
@@ -1085,12 +1125,19 @@ export default function PurchaseInvoice() {
         mrp_markup_percent: '',
         mrp: '',
         gst_logic: design.gst_logic,
-        barcodes_per_item: design.barcodes_per_item || 1,
+        barcodes_per_item: barcodesPerItem,
         image_url: design.photos?.[0] || '',
         description: design.description || '',
         order_number: '',
         hsn_code: design.hsn_code || '',
       });
+
+      // Also reset newItemSizes to all available sizes with 0 quantity
+      setNewItemSizes(sizes.map(s => ({ 
+        size: s.id, 
+        quantity: 0, 
+        print_quantity: 0 
+      })));
     }
   };
 
@@ -1098,8 +1145,23 @@ export default function PurchaseInvoice() {
 
   const editItem = (index: number) => {
     const item = items[index];
+    const barcodesPerItem = parseInt(String(item.barcodes_per_item)) || 1;
+    
+    // Initialize with all available sizes, mapping quantities from the existing item
+    // We sum up quantities if there are duplicate size entries in item.sizes (though handleEditInvoice now prevents this)
+    const fullSizeList = sizes.map(s => {
+      const sizeEntries = (item.sizes || []).filter(es => es.size === s.id);
+      const totalQty = sizeEntries.reduce((sum, es) => sum + (es.quantity || 0), 0);
+      
+      return {
+        size: s.id,
+        quantity: totalQty,
+        print_quantity: totalQty * barcodesPerItem
+      };
+    });
+
     setCurrentItem(item);
-    setNewItemSizes(item.sizes);
+    setNewItemSizes(fullSizeList);
     setEditingIndex(index);
     setShowItemForm(true);
 
@@ -1943,10 +2005,16 @@ export default function PurchaseInvoice() {
         }
       }
 
-      await supabase
+      const { error: deleteError, count } = await supabase
         .from('purchase_items')
-        .delete()
+        .delete({ count: 'exact' })
         .eq('po_id', editingInvoiceId);
+        
+      if (deleteError) {
+        throw new Error(`Failed to clear old invoice items: ${deleteError.message}`);
+      }
+
+      console.log(`Deleted ${count} existing items for invoice ${editingInvoiceId}`);
 
       for (const item of items) {
         for (const sizeQty of item.sizes) {
@@ -1978,7 +2046,7 @@ export default function PurchaseInvoice() {
       setSuccess(`Purchase Invoice ${currentPO.po_number} updated successfully and inventory adjusted.`);
       setSavedPOId(editingInvoiceId);
       setEditingInvoiceId(editingInvoiceId); // Keep editing mode active but with success message
-      setOriginalInvoiceQuantities({});
+      setOriginalInvoiceQuantities(newMap); // Update current state map to prevent doubling on consecutive saves
       // setShowForm(false) // Removed to stay on form
       await loadInvoices();
     } catch (err: any) {
@@ -2215,9 +2283,7 @@ export default function PurchaseInvoice() {
               onClick={() => {
                 setShowForm(false);
                 setEditingInvoiceId(null);
-                setOriginalInvoiceQuantities({});
-                setSavedPOId(null);
-                loadInvoices();
+                resetAllStates();
               }}
               variant="outline"
               className="flex items-center gap-2"
