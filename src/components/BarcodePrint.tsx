@@ -457,7 +457,24 @@ export default function BarcodePrint() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const selectedItemsData = items.filter(item => selectedItems.has(item.barcode_id));
+    const selectedItemsData = items
+      .filter(item => selectedItems.has(item.barcode_id))
+      .sort((a, b) => {
+        // Primary sort: Design Number
+        const designA = (a.design_no || '').toLowerCase();
+        const designB = (b.design_no || '').toLowerCase();
+        if (designA < designB) return -1;
+        if (designA > designB) return 1;
+
+        // Secondary sort: Size Name
+        const sizeA = (a.size?.name || '').toLowerCase();
+        const sizeB = (b.size?.name || '').toLowerCase();
+        if (sizeA < sizeB) return -1;
+        if (sizeA > sizeB) return 1;
+
+        // Tertiary sort: Barcode ID
+        return (a.barcode_id || '').localeCompare(b.barcode_id || '');
+      });
 
     // Log in background, don't await
     if (ENABLE_BARCODE_PRINT_AUDIT_LOGS) {
@@ -526,8 +543,8 @@ export default function BarcodePrint() {
         width: ${size.width};
         height: ${size.height};
         border-bottom: 2px solid #000;
-        padding: ${size.padding};
-        padding-bottom: 3mm;
+        padding: 0.5mm 1.5mm 1.5mm 1.5mm;
+        padding-bottom: 2.5mm;
         margin: 0;
         page-break-before: always;
         page-break-inside: avoid;
@@ -553,7 +570,7 @@ export default function BarcodePrint() {
         <div style="text-align: center; font-family: 'Lato', sans-serif; font-size: ${size.fontSize}; font-weight: 900; letter-spacing: 1px; width: 100%; line-height: 1.1;">
           ${item.barcode_id || ''}
         </div>
-        <div style="text-align: center; border-top: 1.5px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1pt); font-weight: 900; padding-top: 1.5mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px; line-height: 1.1; margin-top: auto;">
+        <div style="text-align: center; border-top: 1.5px solid #000; width: 100%; font-size: calc(${size.fontSize} + 1pt); font-weight: 900; padding-top: 1.5mm; padding-bottom: 1mm; display: flex; justify-content: space-around; align-items: center; letter-spacing: 0.5px; line-height: 1.1; margin-top: auto;">
           <span style="white-space: nowrap;">SIZE: ${(item.size?.name || '').toUpperCase()}</span>
           <span style="font-weight: 400; opacity: 0.7;">|</span>
           <span style="white-space: nowrap;">MRP: \u20B9${finalPrice.toFixed(0)}</span>
