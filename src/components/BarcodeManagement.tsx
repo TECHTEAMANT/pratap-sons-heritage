@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Barcode, Edit2, Save, X, Printer, Upload, Search } from 'lucide-react';
 
@@ -26,7 +26,6 @@ interface BarcodeBatch {
 }
 
 export default function BarcodeManagement() {
-  const [barcodes, setBarcodes] = useState<BarcodeBatch[]>([]);
   const [filteredBarcodes, setFilteredBarcodes] = useState<BarcodeBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -45,56 +44,58 @@ export default function BarcodeManagement() {
 
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const lastRequestRef = useRef(0);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  useEffect(() => {
-    filterBarcodes();
-  }, [searchTerm, barcodes]);
-
-  const loadData = async () => {
+  const loadData = async (search?: string) => {
+    const requestId = Date.now();
+    lastRequestRef.current = requestId;
     setLoading(true);
+
     try {
+      let query = supabase
+        .from('barcode_batches')
+        .select(`
+          *,
+          product_group:product_groups(name, group_code),
+          size:sizes(name, size_code),
+          color:colors(name, color_code),
+          vendor:vendors(name, vendor_code)
+        `);
+
+      const s = (search || '').trim();
+      if (s) {
+        query = query.or(`barcode_alias_8digit.ilike.%${s}%,design_no.ilike.%${s}%,barcode_structured.ilike.%${s}%`);
+      }
+
       const [barcodesRes, discountsRes] = await Promise.all([
-        supabase
-          .from('barcode_batches')
-          .select(`
-            *,
-            product_group:product_groups(name, group_code),
-            size:sizes(name, size_code),
-            color:colors(name, color_code),
-            vendor:vendors(name, vendor_code)
-          `)
-          .order('created_at', { ascending: false }),
+        query.order('created_at', { ascending: false }).limit(s ? 100 : 1000),
         supabase.from('discount_masters').select('*').eq('active', true),
       ]);
 
-      setBarcodes(barcodesRes.data || []);
-      setFilteredBarcodes(barcodesRes.data || []);
-      setDiscountMasters(discountsRes.data || []);
+      // Only update state if this is the most recent request
+      if (requestId === lastRequestRef.current) {
+        setFilteredBarcodes(barcodesRes.data || []);
+        if (discountsRes.data) setDiscountMasters(discountsRes.data);
+      }
     } catch (err) {
       console.error('Error loading barcodes:', err);
       setError('Failed to load barcode data');
     } finally {
-      setLoading(false);
+      // Small delay to ensure state updates have settled if multiple requests were in flight
+      setTimeout(() => {
+        if (requestId === lastRequestRef.current) {
+          setLoading(false);
+        }
+      }, 100);
     }
   };
 
-  const filterBarcodes = () => {
-    if (!searchTerm) {
-      setFilteredBarcodes(barcodes);
-      return;
-    }
-
-    const filtered = barcodes.filter(b =>
-      b.barcode_alias_8digit.includes(searchTerm) ||
-      b.design_no.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      b.vendor?.vendor_code?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-    setFilteredBarcodes(filtered);
-  };
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadData(searchTerm);
+    }, 400); // Slightly faster debounce
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   const startEdit = (barcode: BarcodeBatch) => {
     setEditingId(barcode.id);
@@ -301,8 +302,16 @@ export default function BarcodeManagement() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search by barcode, design number, or vendor code..."
-              className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 

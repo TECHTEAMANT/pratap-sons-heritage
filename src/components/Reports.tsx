@@ -1405,23 +1405,33 @@ export default function Reports() {
                 <Button
                   type="button"
                   onClick={() => {
-                    const csvContent = [
-                      ['Date', 'Barcode', 'Quantity', 'Reason', 'Notes'],
-                      ...defectiveStock.map(item => [
-                        new Date(item.marked_at).toLocaleDateString(),
-                        item.barcode,
-                        item.quantity,
-                        item.reason,
-                        item.notes || ''
-                      ])
-                    ].map(row => row.join(',')).join('\n');
+                    const headers = ['Date', 'Barcode', 'Quantity', 'Reason', 'Notes'];
+                    const escapeCSV = (val: any) => {
+                      const str = String(val ?? '');
+                      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+                        return `"${str.replace(/"/g, '""')}"`;
+                      }
+                      return str;
+                    };
 
-                    const blob = new Blob([csvContent], { type: 'text/csv' });
+                    const rows = defectiveStock.map(item => [
+                      escapeCSV(new Date(item.marked_at).toLocaleDateString()),
+                      escapeCSV(item.barcode),
+                      escapeCSV(item.quantity),
+                      escapeCSV(item.reason),
+                      escapeCSV(item.notes || '')
+                    ]);
+
+                    const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                     const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `defective-stock-${startDate}-to-${endDate}.csv`;
-                    a.click();
+                    const link = document.createElement('a');
+                    link.setAttribute('href', url);
+                    link.setAttribute('download', `defective-stock-${startDate}-to-${endDate}.csv`);
+                    link.style.visibility = 'hidden';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
                   }}
                   className="px-4 py-2 flex items-center"
                 >
@@ -1510,23 +1520,33 @@ export default function Reports() {
                 <Button
                   type="button"
                   onClick={() => {
-                    const csvContent = [
-                      ['Product Group', 'Total Come (In)', 'Total Sail (Out)', 'Remaining Stock', 'Stock %'],
-                      ...productGroupAnalysis.map(g => [
-                        g.name,
-                        g.totalIn,
-                        g.totalOut,
-                        g.remaining,
-                        g.totalIn > 0 ? ((g.remaining / g.totalIn) * 100).toFixed(2) + '%' : '0%'
-                      ])
-                    ].map(row => row.join(',')).join('\n');
+                    const headers = ['Product Group', 'Total Come (In)', 'Total Sail (Out)', 'Remaining Stock', 'Stock %'];
+                    const escapeCSV = (val: any) => {
+                      const str = String(val ?? '');
+                      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+                        return `"${str.replace(/"/g, '""')}"`;
+                      }
+                      return str;
+                    };
 
-                    const blob = new Blob([csvContent], { type: 'text/csv' });
+                    const rows = productGroupAnalysis.map(g => [
+                      escapeCSV(g.name),
+                      escapeCSV(g.totalIn),
+                      escapeCSV(g.totalOut),
+                      escapeCSV(g.remaining),
+                      escapeCSV(g.totalIn > 0 ? ((g.remaining / g.totalIn) * 100).toFixed(2) + '%' : '0%')
+                    ]);
+
+                    const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                     const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `product-group-analysis-${new Date().toISOString().split('T')[0]}.csv`;
-                    a.click();
+                    const link = document.createElement('a');
+                    link.setAttribute('href', url);
+                    link.setAttribute('download', `product-group-analysis-${new Date().toISOString().split('T')[0]}.csv`);
+                    link.style.visibility = 'hidden';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
                   }}
                   className="px-4 py-2 flex items-center"
                 >

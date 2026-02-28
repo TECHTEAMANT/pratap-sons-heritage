@@ -84,6 +84,8 @@ export default function PurchaseInvoice() {
 
   const [taxableValue, setTaxableValue] = useState('');
   const [calculatedGST, setCalculatedGST] = useState(0);
+  const [manualGstAmount, setManualGstAmount] = useState('');
+  const [isGstOverridden, setIsGstOverridden] = useState(false);
   const [gstType, setGstType] = useState<GSTTransactionType>('CGST_SGST');
 
   // Other Ledger
@@ -217,6 +219,8 @@ export default function PurchaseInvoice() {
     setItems([]);
     setTaxableValue('');
     setCalculatedGST(0);
+    setManualGstAmount('');
+    setIsGstOverridden(false);
     setGstType('CGST_SGST');
     setLedgerDiscount('');
     setLedgerFreight('');
@@ -305,6 +309,8 @@ export default function PurchaseInvoice() {
     setLedgerDiscount(invoice.ledger_discount != null ? String(invoice.ledger_discount) : '');
     setLedgerFreight(invoice.ledger_freight != null ? String(invoice.ledger_freight) : '');
     setLedgerFreightGstRate((invoice.ledger_freight_gst_rate === 18 ? 18 : 5) as 5 | 18);
+    setManualGstAmount(invoice.manual_gst_amount != null ? String(invoice.manual_gst_amount) : '');
+    setIsGstOverridden(invoice.manual_gst_amount != null);
 
     setInvoiceAttachment(invoice.vendor_invoice_attachment || '');
 
@@ -398,8 +404,11 @@ export default function PurchaseInvoice() {
         const rowQty = parseInt(String(row.quantity)) || 0;
         
         if (existing && existingSizeIndex > -1) {
-          existing.sizes[existingSizeIndex].quantity += rowQty;
-          existing.sizes[existingSizeIndex].print_quantity += rowQty * (row.barcodes_per_item || 1);
+          const sItem = existing.sizes[existingSizeIndex];
+          if (sItem) {
+            sItem.quantity += rowQty;
+            sItem.print_quantity = (sItem.print_quantity || 0) + (rowQty * (row.barcodes_per_item || 1));
+          }
         } else if (existing) {
           existing.sizes.push({
             size: rowSizeId,
@@ -533,6 +542,13 @@ export default function PurchaseInvoice() {
       setCalculatedGST(freightGst);
     }
   }, [taxableValue, items.length, ledgerFreight, ledgerFreightGstRate]);
+
+  // Sync Manual GST with Calculated GST if not overridden
+  useEffect(() => {
+    if (!isGstOverridden) {
+      setManualGstAmount(calculatedGST > 0 ? calculatedGST.toFixed(2) : '');
+    }
+  }, [calculatedGST, isGstOverridden]);
 
   const handleItemFieldChange = (field: string, value: any) => {
     setCurrentItem((prev: any) => {
@@ -1385,7 +1401,7 @@ export default function PurchaseInvoice() {
       const discountAmt = parseFloat(ledgerDiscount) || 0;
       const freightAmt = parseFloat(ledgerFreight) || 0;
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
-      const finalGST = calculatedGST;
+      const finalGST = parseFloat(manualGstAmount) || calculatedGST;
       const grandTotal = Math.round(itemsTotal - discountAmt + freightAmt + finalGST);
 
       const { data: po, error: poError } = await supabase
@@ -1403,7 +1419,7 @@ export default function PurchaseInvoice() {
           ledger_discount: discountAmt > 0 ? discountAmt : null,
           ledger_freight: freightAmt > 0 ? freightAmt : null,
           ledger_freight_gst_rate: freightAmt > 0 ? ledgerFreightGstRate : null,
-          manual_gst_amount: null,
+          manual_gst_amount: (parseFloat(manualGstAmount) || null),
           vendor_invoice_attachment: invoiceAttachment || null,
           gst_difference_reason: null,
           gst_type: gstType,
@@ -1730,7 +1746,7 @@ export default function PurchaseInvoice() {
       const discountAmt = parseFloat(ledgerDiscount) || 0;
       const freightAmt = parseFloat(ledgerFreight) || 0;
       const totalItems = items.reduce((sum, item) => sum + getTotalQuantity(item), 0);
-      const finalGST = calculatedGST;
+      const finalGST = parseFloat(manualGstAmount) || calculatedGST;
       const grandTotal = Math.round(itemsTotal - discountAmt + freightAmt + finalGST);
 
       const { error: poUpdateError } = await supabase
@@ -1747,7 +1763,7 @@ export default function PurchaseInvoice() {
           ledger_discount: discountAmt > 0 ? discountAmt : null,
           ledger_freight: freightAmt > 0 ? freightAmt : null,
           ledger_freight_gst_rate: freightAmt > 0 ? ledgerFreightGstRate : null,
-          manual_gst_amount: null,
+          manual_gst_amount: (parseFloat(manualGstAmount) || null),
           vendor_invoice_attachment: invoiceAttachment || null,
           gst_difference_reason: null,
           gst_type: gstType,
@@ -3024,6 +3040,41 @@ export default function PurchaseInvoice() {
               />
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Manual GST Override
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={manualGstAmount}
+                onChange={(e) => {
+                  setManualGstAmount(e.target.value);
+                  setIsGstOverridden(true);
+                }}
+                className={`w-full px-4 py-2 border-2 rounded-lg focus:ring-2 focus:ring-emerald-500 font-bold ${
+                  isGstOverridden ? 'border-amber-300 bg-amber-50' : 'border-gray-300'
+                }`}
+                placeholder="0.00"
+              />
+              <div className="flex justify-between items-center mt-1">
+                <p className="text-xs text-gray-500">
+                  {isGstOverridden ? 'Manual override active' : 'Syncing with calculated GST'}
+                </p>
+                {isGstOverridden && (
+                  <button
+                    onClick={() => {
+                      setIsGstOverridden(false);
+                      setManualGstAmount(calculatedGST > 0 ? calculatedGST.toFixed(2) : '');
+                    }}
+                    className="text-xs text-emerald-600 hover:text-emerald-800 font-medium"
+                  >
+                    Reset to Auto
+                  </button>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -3072,10 +3123,16 @@ export default function PurchaseInvoice() {
           )}
           <div className="flex justify-between text-lg font-semibold text-gray-700 mt-2 border-t border-emerald-200 pt-2">
             <span>Total GST:</span>
-            <span className="text-emerald-700">₹{calculatedGST.toFixed(2)}</span>
+            <span className="text-emerald-700">₹{(parseFloat(manualGstAmount) || calculatedGST).toFixed(2)}</span>
           </div>
+          {parseFloat(manualGstAmount) > 0 && Math.abs(parseFloat(manualGstAmount) - calculatedGST) > 0.01 && (
+            <div className="flex justify-between text-xs font-medium text-amber-600 mt-1">
+              <span>(GST Override Active: Auto was ₹{calculatedGST.toFixed(2)})</span>
+            </div>
+          )}
           {(() => {
-            const exact = calculateTotal() - (parseFloat(ledgerDiscount) || 0) + (parseFloat(ledgerFreight) || 0) + calculatedGST;
+            const finalGST = parseFloat(manualGstAmount) || calculatedGST;
+            const exact = calculateTotal() - (parseFloat(ledgerDiscount) || 0) + (parseFloat(ledgerFreight) || 0) + finalGST;
             const rounded = Math.round(exact);
             const roundOff = rounded - exact;
             return (

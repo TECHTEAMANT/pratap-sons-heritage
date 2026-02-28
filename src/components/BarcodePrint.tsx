@@ -619,25 +619,37 @@ export default function BarcodePrint() {
     const selectedItemsData = items.filter(item => selectedItems.has(item.barcode_id));
 
     const headers = ['Barcode ID', 'Product Group', 'Design No', 'Color', 'Size', 'MRP', 'Invoice No', 'Order No', 'Status'];
+    
+    const escapeCSV = (val: any) => {
+      const str = String(val ?? '');
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
     const rows = selectedItemsData.map(item => [
-      item.barcode_id,
-      item.product_group?.name || '',
-      item.design_no,
-      item.color?.name || '',
-      item.size?.name || '',
-      item.mrp,
-      item.invoice_number || item.purchase_orders?.invoice_number || '',
-      item.order_number || item.purchase_orders?.order_number || '',
-      item.status || 'New'
+      escapeCSV(item.barcode_id),
+      escapeCSV(item.product_group?.name || ''),
+      escapeCSV(item.design_no),
+      escapeCSV(item.color?.name || ''),
+      escapeCSV(item.size?.name || ''),
+      escapeCSV(item.mrp),
+      escapeCSV(item.invoice_number || item.purchase_orders?.invoice_number || ''),
+      escapeCSV(item.order_number || item.purchase_orders?.order_number || ''),
+      escapeCSV(item.status || 'New')
     ]);
 
-    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const csvStr = [headers, ...rows].map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `barcodes-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `barcodes-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
